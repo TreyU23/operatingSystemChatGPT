@@ -1,0 +1,55 @@
+package com.localassistant.os.agent;
+
+import com.fasterxml.jackson.annotation.JsonClassDescription;
+import com.fasterxml.jackson.annotation.JsonPropertyDescription;
+import com.fasterxml.jackson.annotation.JsonTypeName;
+
+public final class AssistantTools {
+    private AssistantTools() {}
+
+    @JsonTypeName("list_workspace_files")
+    @JsonClassDescription("Lists files inside the configured project workspace. This is read-only.")
+    public static class ListWorkspaceFiles {
+        @JsonPropertyDescription("Workspace-relative directory, or . for the root.")
+        public String subdirectory;
+        @JsonPropertyDescription("Maximum number of files from 1 to 500.")
+        public int limit;
+    }
+
+    @JsonTypeName("read_workspace_file")
+    @JsonClassDescription("Reads a UTF-8 text file of at most 100 KB from inside the workspace.")
+    public static class ReadWorkspaceFile {
+        public String path;
+    }
+
+    @JsonTypeName("recall_memory")
+    @JsonClassDescription("Searches memories the user previously chose to store.")
+    public static class RecallMemory {
+        public String query;
+        public int limit;
+    }
+
+    @JsonTypeName("propose_write_file")
+    @JsonClassDescription("Queues a workspace file write for user approval. Never writes immediately.")
+    public static class ProposeWriteFile {
+        public String path;
+        public String content;
+        public String reason;
+    }
+
+    @JsonTypeName("propose_open_url")
+    @JsonClassDescription("Queues opening an HTTP or HTTPS URL in the Windows browser for user approval.")
+    public static class ProposeOpenUrl {
+        public String url;
+        public String reason;
+    }
+
+    @JsonTypeName("propose_memory")
+    @JsonClassDescription("Queues a useful durable memory for user approval.")
+    public static class ProposeMemory {
+        public String content;
+        @JsonPropertyDescription("One of preference, project, fact, or instruction.")
+        public String category;
+        public String reason;
+    }
+}

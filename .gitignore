@@ -1,0 +1,10 @@
+.tools/
+.mvn/wrapper/maven-wrapper.jar
+backend/target/
+frontend/node_modules/
+frontend/dist/
+.env
+data/*.json
+data/*.tmp
+*.log
+.DS_Store
