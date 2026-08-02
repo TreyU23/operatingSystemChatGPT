@@ -22,8 +22,8 @@ class ActionServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         AssistantProperties properties = new AssistantProperties();
-        properties.setDataDir(root.resolve("data"));
-        properties.setWorkspaceRoot(root);
+        properties.setDataDir(root.resolve("data").toString());
+        properties.setWorkspaceRoot(root.toString());
         StateStore store = new StateStore(properties);
         store.initialize();
         WorkspaceService workspace = new WorkspaceService(properties);
@@ -61,5 +61,15 @@ class ActionServiceTest {
                 "Should not queue."))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Only HTTP and HTTPS");
+    }
+
+    @Test
+    void unknownWindowsUrisAreRejectedBeforeQueueing() {
+        assertThatThrownBy(() -> actions.propose(
+                "windows_open_uri",
+                Map.of("uri", "file:///C:/Windows/System32/calc.exe"),
+                "Should not queue."))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("approved capability list");
     }
 }

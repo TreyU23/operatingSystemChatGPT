@@ -21,7 +21,7 @@ public class WorkspaceService {
     private final Path root;
 
     public WorkspaceService(AssistantProperties properties) {
-        this.root = properties.getWorkspaceRoot().toAbsolutePath().normalize();
+        this.root = Path.of(properties.getWorkspaceRoot()).toAbsolutePath().normalize();
     }
 
     public Path root() {

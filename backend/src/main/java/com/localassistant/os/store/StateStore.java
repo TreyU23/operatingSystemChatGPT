@@ -29,7 +29,7 @@ public class StateStore {
     private AppState state = AppState.empty();
 
     public StateStore(AssistantProperties properties) {
-        this.filePath = properties.getDataDir().toAbsolutePath().normalize().resolve("assistant-state.json");
+        this.filePath = Path.of(properties.getDataDir()).toAbsolutePath().normalize().resolve("assistant-state.json");
     }
 
     @PostConstruct

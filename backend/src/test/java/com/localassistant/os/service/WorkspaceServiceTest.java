@@ -34,7 +34,7 @@ class WorkspaceServiceTest {
 
     private WorkspaceService workspace() {
         AssistantProperties properties = new AssistantProperties();
-        properties.setWorkspaceRoot(root);
+        properties.setWorkspaceRoot(root.toString());
         return new WorkspaceService(properties);
     }
 }

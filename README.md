@@ -1,73 +1,107 @@
-# Local Assistant OS — Backend
+# Local Assistant OS
 
-This folder contains the first backend slice of a local-first assistant that runs beside Windows and will later be used by a localhost web interface.
+A local-first assistant service that runs beside Windows and will be used by a browser interface on localhost. The backend is Java; the future frontend will be TypeScript.
 
-It is an application, not a replacement operating-system kernel. The long-term “OS” experience will be a browser-based assistant shell backed by this service and narrowly scoped Windows/browser adapters.
+This is an assistant application rather than an operating-system kernel. Its “OS” experience will come from a browser-based shell, durable memory, and narrowly scoped Windows/browser capabilities.
 
-## What works now
+## Project layout
 
-- Fastify API bound to `127.0.0.1` by default.
-- OpenAI Responses API integration with multi-turn local conversation history.
-- Read-only tools for listing and reading files inside this project workspace.
-- Durable, user-owned local memory stored in `data/assistant-state.json`.
-- Approval-gated proposals for workspace file writes, opening web URLs, and saving memories.
-- No arbitrary shell execution and no file access outside `WORKSPACE_ROOT`.
-- Automated API and workspace-boundary tests.
+```text
+backend/    Java 21 + Spring Boot API
+frontend/   Reserved for the TypeScript interface
+data/       Local conversations, memories, and pending actions
+scripts/    Project-local setup and run commands
+```
 
-## Run locally
+## Backend capabilities
 
-Requirements: Node.js 20+ and pnpm.
+- OpenAI Responses API integration through the official Java SDK.
+- Local conversation history and user-controlled durable memory.
+- Read-only workspace file listing and text-file access.
+- Explicit approval queue for file writes, opening browser URLs, and model-proposed memories.
+- Workspace path confinement with symbolic-link traversal rejection.
+- No arbitrary shell tool.
+- API bound to `127.0.0.1` by default.
+
+## Requirements
+
+Java 21 is required. If Java is not installed globally, the included bootstrap script downloads a verified Eclipse Temurin 21 JDK into the ignored `.tools` directory:
 
 ```powershell
-pnpm install
+.\scripts\bootstrap-java.ps1
+```
+
+The Maven wrapper is included, so Maven does not need to be installed globally.
+
+## Configure OpenAI
+
+Copy the example configuration:
+
+```powershell
 Copy-Item .env.example .env
 ```
 
-Add an OpenAI project API key to `.env`, then:
+Put a newly created OpenAI project API key in `.env`:
 
-```powershell
-pnpm dev
+```properties
+OPENAI_API_KEY=your_replacement_key
 ```
 
-The API starts at `http://127.0.0.1:4317`.
+API keys are secrets and must never be embedded in Java source or committed. `.env` is ignored by Git. The official OpenAI SDK also supports reading `OPENAI_API_KEY` directly from the process environment.
 
-Check it:
+## Run
+
+```powershell
+.\scripts\run-backend.ps1
+```
+
+The service starts at `http://127.0.0.1:4317`.
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:4317/health
 ```
 
-Never commit `.env`. A ChatGPT subscription does not supply an API key; API access is configured separately in the OpenAI platform.
+## Build and test
 
-## API surface
+```powershell
+$env:JAVA_HOME = (Resolve-Path '.tools\jdk-21').Path
+.\mvnw.cmd -pl backend test
+.\mvnw.cmd -pl backend package
+```
+
+The packaged application is written to `backend/target/assistant-backend-0.1.0-SNAPSHOT.jar`.
+
+## API
 
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Service and OpenAI configuration status |
-| `POST` | `/api/chat` | Send `{ message, conversationId? }` |
+| `POST` | `/api/chat` | Send `{ "message": "...", "conversationId": "optional" }` |
 | `GET` | `/api/conversations` | List conversations |
-| `GET` | `/api/conversations/:id` | Read one conversation |
+| `GET` | `/api/conversations/:id` | Read a conversation |
 | `GET` | `/api/actions?status=pending` | Review assistant-proposed actions |
-| `POST` | `/api/actions/:id/approve` | Approve and execute one action |
-| `POST` | `/api/actions/:id/reject` | Reject one action |
+| `POST` | `/api/actions/:id/approve` | Approve and execute an action |
+| `POST` | `/api/actions/:id/reject` | Reject an action |
 | `GET` | `/api/memories` | List local memories |
 | `POST` | `/api/memories` | Create an explicit memory |
 | `DELETE` | `/api/memories/:id` | Forget a memory |
 
 ## Safety model
 
-The model can request actions, but the backend owns the actual capabilities. Read-only project inspection runs automatically. Writes, browser launches, and model-suggested memories become pending records and require a separate approval request. Paths are restricted to the configured workspace, symbolic-link traversal is rejected, and only HTTP(S) URLs can be opened.
+The model can propose actions, but Java owns every real capability. Read-only project inspection can execute immediately. Writes, browser launches, and model-suggested memories are stored as pending actions and require a separate approval request.
 
-The API currently assumes a single trusted user on the local machine. Before exposing it beyond localhost, add authentication, origin/CSRF protection, rate limiting, encrypted secret storage, and a stronger audit log.
+The API currently assumes one trusted user on the local machine. Before exposing it beyond localhost, add authentication, origin and CSRF protection, rate limiting, encrypted secret storage, and an append-only audit log.
 
-## “Learning” approach
+## Learning model
 
-The first version learns through explicit, editable memory rather than changing model weights or silently collecting activity. This is more predictable: the user can inspect and delete every durable memory. Later phases can add embeddings, memory consolidation, and feedback-based ranking while retaining that control.
+The assistant currently “learns” through explicit, inspectable memory rather than silently training or modifying model weights. Every durable memory can be listed and deleted. Later versions can add embeddings and memory consolidation while retaining user control.
 
-## Suggested next milestones
+## Next milestones
 
-1. Build the localhost chat and approval UI.
-2. Add streaming responses over Server-Sent Events.
-3. Add a Playwright browser adapter with per-domain permissions and screenshots before clicks/submits.
-4. Add narrow Windows adapters (notifications, app launching, clipboard, and files) one capability at a time.
-5. Add authentication and an append-only audit trail before any remote access.
+1. Build the TypeScript localhost chat and approval interface.
+2. Add streaming responses using Server-Sent Events.
+3. Add a Playwright for Java browser adapter with per-domain permissions.
+4. Add narrow Windows capabilities one at a time.
+5. Add authentication and an append-only audit trail before remote access.
+
+OpenAI references: [Java quickstart](https://developers.openai.com/api/docs/quickstart), [function calling](https://developers.openai.com/api/docs/guides/function-calling), and [GPT-5.6 guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.6).

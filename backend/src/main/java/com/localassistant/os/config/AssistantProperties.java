@@ -1,29 +1,28 @@
 package com.localassistant.os.config;
 
-import java.nio.file.Path;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "assistant")
 public class AssistantProperties {
-    private Path dataDir = Path.of("data");
-    private Path workspaceRoot = Path.of(".");
+    private String dataDir = "../data";
+    private String workspaceRoot = "..";
     private String openaiApiKey = "";
     private String openaiModel = "gpt-5.6-sol";
     private String reasoningEffort = "medium";
 
-    public Path getDataDir() {
+    public String getDataDir() {
         return dataDir;
     }
 
-    public void setDataDir(Path dataDir) {
+    public void setDataDir(String dataDir) {
         this.dataDir = dataDir;
     }
 
-    public Path getWorkspaceRoot() {
+    public String getWorkspaceRoot() {
         return workspaceRoot;
     }
 
-    public void setWorkspaceRoot(Path workspaceRoot) {
+    public void setWorkspaceRoot(String workspaceRoot) {
         this.workspaceRoot = workspaceRoot;
     }
 

@@ -7,6 +7,7 @@ import com.localassistant.os.model.ConversationMessage;
 import com.localassistant.os.service.ActionService;
 import com.localassistant.os.service.MemoryService;
 import com.localassistant.os.service.WorkspaceService;
+import com.localassistant.os.service.SystemService;
 import com.localassistant.os.store.StateStore;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -32,6 +33,7 @@ public class AssistantController {
     private final MemoryService memories;
     private final WorkspaceService workspace;
     private final AssistantProperties properties;
+    private final SystemService system;
 
     public AssistantController(
             StateStore store,
@@ -39,13 +41,15 @@ public class AssistantController {
             ActionService actions,
             MemoryService memories,
             WorkspaceService workspace,
-            AssistantProperties properties) {
+            AssistantProperties properties,
+            SystemService system) {
         this.store = store;
         this.agent = agent;
         this.actions = actions;
         this.memories = memories;
         this.workspace = workspace;
         this.properties = properties;
+        this.system = system;
     }
 
     @GetMapping("/health")
@@ -125,6 +129,53 @@ public class AssistantController {
     @GetMapping("/api/memories")
     public Object memories() {
         return memories.list();
+    }
+
+    @GetMapping("/api/system")
+    public Object system() {
+        return system.snapshot();
+    }
+
+    @GetMapping("/api/system/apps")
+    public Object runningApps() {
+        return system.runningApps();
+    }
+
+    @GetMapping("/api/integrations/phone-link")
+    public Object phoneLink() {
+        return system.phoneLink();
+    }
+
+    @PostMapping("/api/system/controls/{id}")
+    public ResponseEntity<?> openSystemControl(@PathVariable String id) {
+        try {
+            var control = system.control(id);
+            var action = actions.propose(
+                    "windows_open_uri",
+                    Map.of("uri", control.settingsUri()),
+                    "Open Windows " + control.label() + " settings.");
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(action);
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(error(error));
+        }
+    }
+
+    @PostMapping("/api/integrations/phone-link/open")
+    public ResponseEntity<?> openPhoneLink() {
+        try {
+            var phone = system.phoneLink();
+            if (!phone.installed()) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("error", "Microsoft Phone Link is not installed."));
+            }
+            var action = actions.propose(
+                    "windows_open_uri",
+                    Map.of("uri", phone.uri()),
+                    "Open Microsoft Phone Link.");
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(action);
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(error(error));
+        }
     }
 
     @PostMapping("/api/memories")

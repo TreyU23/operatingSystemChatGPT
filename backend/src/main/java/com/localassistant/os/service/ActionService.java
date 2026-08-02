@@ -9,10 +9,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ActionService {
+    private static final Set<String> ALLOWED_WINDOWS_URIS = Set.of(
+            "ms-settings:network-wifi",
+            "ms-settings:bluetooth",
+            "ms-settings:quiethours",
+            "ms-settings:nightlight",
+            "ms-settings:privacy-microphone",
+            "ms-settings:batterysaver",
+            "ms-phone:");
     private final StateStore store;
     private final WorkspaceService workspace;
     private final MemoryService memories;
@@ -62,6 +71,7 @@ public class ActionService {
                 requireString(arguments.get("content"), "content", 0, 500_000);
             }
             case "browser_open_url" -> parseWebUri(requireString(arguments.get("url"), "url", 1, 2_000));
+            case "windows_open_uri" -> parseWindowsUri(requireString(arguments.get("uri"), "uri", 1, 200));
             case "remember" -> {
                 requireString(arguments.get("content"), "content", 1, 2_000);
                 requireString(arguments.get("category"), "category", 1, 32);
@@ -87,6 +97,14 @@ public class ActionService {
             new ProcessBuilder("rundll32.exe", "url.dll,FileProtocolHandler", uri.toString()).start();
             return Map.of("opened", uri.toString());
         }
+        if (action.kind().equals("windows_open_uri")) {
+            String uri = parseWindowsUri(String.valueOf(action.arguments().get("uri")));
+            if (!System.getProperty("os.name", "").toLowerCase().contains("windows")) {
+                throw new IllegalStateException("Windows settings are available on Windows only.");
+            }
+            new ProcessBuilder("explorer.exe", uri).start();
+            return Map.of("opened", uri);
+        }
         return memories.add(
                 String.valueOf(action.arguments().get("content")),
                 String.valueOf(action.arguments().get("category")));
@@ -111,6 +129,13 @@ public class ActionService {
             throw new IllegalArgumentException("Only HTTP and HTTPS URLs are allowed.");
         }
         return uri;
+    }
+
+    private String parseWindowsUri(String value) {
+        if (!ALLOWED_WINDOWS_URIS.contains(value)) {
+            throw new IllegalArgumentException("Windows URI is not in the approved capability list.");
+        }
+        return value;
     }
 
     private String requireString(Object value, String name, int minimum, int maximum) {
