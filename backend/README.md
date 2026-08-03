@@ -4,7 +4,13 @@ The backend is a Java 21/Spring Boot 4.1 service that runs on `127.0.0.1:4317`. 
 
 Use the complete setup, integration, security, API, test, and troubleshooting instructions in the [project README](../README.md).
 
-From the repository root:
+For normal use, start the complete project from the repository root with one command:
+
+```powershell
+.\start.cmd
+```
+
+For backend-only development:
 
 ```powershell
 .\scripts\bootstrap-java.ps1

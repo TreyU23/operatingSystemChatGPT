@@ -118,6 +118,16 @@ The final two lines make the key available to the current terminal immediately. 
 
 ## Start Live Desktop
 
+### Recommended: one command
+
+From the repository root, run:
+
+```powershell
+.\start.cmd
+```
+
+This starts both the Java backend and React frontend in the background. If an older Live Desktop instance is already using ports `4317` or `4173`, the launcher safely replaces those project processes first. When startup finishes, open [http://localhost:4173](http://localhost:4173).
+
 ### Visible development terminals
 
 Open two PowerShell terminals at the repository root.
@@ -136,9 +146,9 @@ Terminal 2:
 
 Open [http://localhost:4173](http://localhost:4173). The backend health endpoint is [http://127.0.0.1:4317/health](http://127.0.0.1:4317/health).
 
-### One-command background start or restart
+### Direct lifecycle command
 
-The lifecycle script stops only the project processes listening on ports `4173` and `4317`, waits for both ports to close, and relaunches both services in hidden PowerShell processes:
+`start.cmd` wraps the following lifecycle command. You can still invoke it directly when troubleshooting:
 
 ```powershell
 .\scripts\project-lifecycle.ps1 -Action restart -WorkspaceRoot (Get-Location).Path

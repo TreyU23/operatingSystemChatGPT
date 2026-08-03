@@ -4,7 +4,13 @@ The frontend is a React 19/Vite 6 true-black Windows dashboard. It includes syst
 
 Use the complete first-time setup, integration, security, build, and troubleshooting instructions in the [project README](../README.md).
 
-After the backend is running, start the frontend from the repository root:
+For normal use, start the frontend and backend together from the repository root:
+
+```powershell
+.\start.cmd
+```
+
+For frontend-only development after the backend is already running:
 
 ```powershell
 .\scripts\run-frontend.ps1
