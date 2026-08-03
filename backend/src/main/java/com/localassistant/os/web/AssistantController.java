@@ -1,18 +1,21 @@
 package com.localassistant.os.web;
 
 import com.localassistant.os.agent.OpenAiAgent;
-import com.localassistant.os.config.AssistantProperties;
 import com.localassistant.os.model.Conversation;
 import com.localassistant.os.model.ConversationMessage;
 import com.localassistant.os.service.ActionService;
 import com.localassistant.os.service.MemoryService;
+import com.localassistant.os.service.RuntimeService;
+import com.localassistant.os.service.ICloudCalendarService;
 import com.localassistant.os.service.WorkspaceService;
 import com.localassistant.os.service.SystemService;
+import com.localassistant.os.service.WindowsMediaSessionService;
 import com.localassistant.os.store.StateStore;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.io.IOException;
+import java.time.LocalDate;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -32,8 +35,10 @@ public class AssistantController {
     private final ActionService actions;
     private final MemoryService memories;
     private final WorkspaceService workspace;
-    private final AssistantProperties properties;
     private final SystemService system;
+    private final RuntimeService runtime;
+    private final ICloudCalendarService iCloudCalendar;
+    private final WindowsMediaSessionService mediaSession;
 
     public AssistantController(
             StateStore store,
@@ -41,15 +46,19 @@ public class AssistantController {
             ActionService actions,
             MemoryService memories,
             WorkspaceService workspace,
-            AssistantProperties properties,
-            SystemService system) {
+            SystemService system,
+            RuntimeService runtime,
+            ICloudCalendarService iCloudCalendar,
+            WindowsMediaSessionService mediaSession) {
         this.store = store;
         this.agent = agent;
         this.actions = actions;
         this.memories = memories;
         this.workspace = workspace;
-        this.properties = properties;
         this.system = system;
+        this.runtime = runtime;
+        this.iCloudCalendar = iCloudCalendar;
+        this.mediaSession = mediaSession;
     }
 
     @GetMapping("/health")
@@ -141,6 +150,20 @@ public class AssistantController {
         return system.runningApps();
     }
 
+    @GetMapping("/api/runtime")
+    public Object runtime() {
+        return runtime.status();
+    }
+
+    @PostMapping("/api/runtime/{action}")
+    public ResponseEntity<?> lifecycle(@PathVariable String action) {
+        try {
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(runtime.request(action));
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(error(error));
+        }
+    }
+
     @GetMapping("/api/integrations/phone-link")
     public Object phoneLink() {
         return system.phoneLink();
@@ -178,6 +201,45 @@ public class AssistantController {
         }
     }
 
+    @GetMapping("/api/integrations/icloud-calendar")
+    public Object iCloudCalendar(
+            @RequestParam(required = false) LocalDate date,
+            @RequestParam(required = false) Long refresh) {
+        return iCloudCalendar.snapshot(date == null ? LocalDate.now() : date, refresh != null);
+    }
+
+    @PostMapping("/api/integrations/icloud-calendar/connect")
+    public ResponseEntity<?> connectICloudCalendar(@RequestBody ICloudCalendarRequest request) {
+        try {
+            return ResponseEntity.ok(iCloudCalendar.connect(request.email(), request.appSpecificPassword()));
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(error(error));
+        }
+    }
+
+    @DeleteMapping("/api/integrations/icloud-calendar")
+    public ResponseEntity<?> disconnectICloudCalendar() {
+        try {
+            return ResponseEntity.ok(iCloudCalendar.disconnect());
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(error(error));
+        }
+    }
+
+    @GetMapping("/api/integrations/media-session")
+    public Object mediaSession() {
+        return mediaSession.snapshot();
+    }
+
+    @PostMapping("/api/integrations/media-session/{action}")
+    public ResponseEntity<?> controlMediaSession(@PathVariable String action) {
+        try {
+            return ResponseEntity.ok(mediaSession.control(action));
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(error(error));
+        }
+    }
+
     @PostMapping("/api/memories")
     public ResponseEntity<?> createMemory(@RequestBody MemoryRequest request) {
         try {
@@ -205,4 +267,7 @@ public class AssistantController {
             @NotBlank @Size(max = 20_000) String message) {}
 
     public record MemoryRequest(String content, String category) {}
+
+    public record ICloudCalendarRequest(String email, String appSpecificPassword) {}
+
 }

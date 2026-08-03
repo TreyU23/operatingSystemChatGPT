@@ -42,4 +42,30 @@ class AssistantApplicationTest {
         assertThat(response.statusCode()).isEqualTo(503);
         assertThat(response.body()).contains("OPENAI_API_KEY is not configured");
     }
+
+    @Test
+    void runtimeEndpointReportsTheLocalBackend() throws Exception {
+        HttpResponse<String> response = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/runtime")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"backendOnline\":true");
+        assertThat(response.body()).contains("\"capturedAt\"");
+    }
+
+    @Test
+    void iCloudCalendarStartsDisconnectedWithoutStoredCredentials() throws Exception {
+        HttpResponse<String> response = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port
+                                + "/api/integrations/icloud-calendar?date=2026-08-02"))
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"connected\":false");
+        assertThat(response.body()).contains("\"date\":\"2026-08-02\"");
+        assertThat(response.body()).contains("\"events\":[]");
+    }
 }

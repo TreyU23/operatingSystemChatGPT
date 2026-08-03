@@ -1,16 +1,23 @@
 # Live Desktop frontend
 
-The frontend is a Vite + React interface for the local Java assistant service. It includes live system information, approval-backed Windows controls, assistant conversations, memories, running-application widgets, and Microsoft Phone Link detection.
+The frontend is a React 19/Vite 6 true-black Windows dashboard. It includes system controls and information, conversations, memories, approvals, iCloud Calendar, a persistent custom Apple Music player, Phone Link status, settings, and frontend/backend lifecycle controls.
 
-## Run locally
+Use the complete first-time setup, integration, security, build, and troubleshooting instructions in the [project README](../README.md).
 
-Start the backend from the repository root, then start this frontend:
+After the backend is running, start the frontend from the repository root:
 
 ```powershell
-.\scripts\run-backend.ps1
 .\scripts\run-frontend.ps1
 ```
 
-The interface opens at `http://localhost:4173`. Vite proxies `/health` and `/api` requests to the backend on `127.0.0.1:4317`.
+Open [http://localhost:4173](http://localhost:4173). Vite proxies `/health` and `/api` to `http://127.0.0.1:4317`.
 
-Windows toggles do not execute hidden registry or shell mutations. Selecting one creates an approval that opens the matching Windows Settings surface. Phone Link follows the same approval path.
+For a fresh dependency install and production verification:
+
+```powershell
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend run build
+pnpm --dir frontend run test:sites
+```
+
+Apple Music uses the embedded Apple web player and Windows' built-in media-session controls. It requires no Apple Developer Program membership, developer token, `.p8` key, or extra paid API.

@@ -3,6 +3,7 @@ package com.localassistant.os.agent;
 import com.fasterxml.jackson.annotation.JsonClassDescription;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import com.fasterxml.jackson.annotation.JsonTypeName;
+import java.util.List;
 
 public final class AssistantTools {
     private AssistantTools() {}
@@ -27,6 +28,15 @@ public final class AssistantTools {
     public static class RecallMemory {
         public String query;
         public int limit;
+    }
+
+    @JsonTypeName("get_dashboard_context")
+    @JsonClassDescription("Returns a compact live subset of the dashboard. Request only topics needed for the user's question. Valid topics: system, apps, phone, calendar, music, runtime, approvals, summary. Never request unrelated topics.")
+    public static class GetDashboardContext {
+        @JsonPropertyDescription("One to four relevant dashboard topics.")
+        public List<String> topics;
+        @JsonPropertyDescription("Optional calendar date in YYYY-MM-DD format; only relevant with the calendar topic.")
+        public String date;
     }
 
     @JsonTypeName("propose_write_file")

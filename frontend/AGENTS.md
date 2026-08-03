@@ -12,5 +12,13 @@ When implementing from a selected generated mock, treat that image as the source
 - The application background is true black (`#000000`), never charcoal, navy, or a gradient.
 - Use near-black raised surfaces, subtle separators, warm-white text, cobalt-blue controls, mint health states, and amber approvals.
 - Preserve airy spacing and avoid a dense wall of bordered cards.
+- Dashboard widgets must respond inside Live Desktop first; any action that opens a Windows app must be explicitly labeled as external.
+- Keep frontend/backend restart and shutdown controls visible in the top bar, with a confirmation step for shutdown.
+- Phone Link status should refresh automatically and on demand, using live local metadata instead of hardcoded notification or device details.
+- Settings owns account connections and appearance preferences; true-black dark mode is the default and the preference persists locally.
+- The Apple Music dashboard widget and full-window Music view use the original compact custom player design: album art, real track metadata, progress, and playback controls.
+- Extra dashboard integrations must not require an additional paid developer program or paid API. Prefer local Windows capabilities and user-owned services.
+- Apple Music uses one persistent Apple web embed for playlist selection and Windows Global System Media Transport Controls for real metadata and playback commands. It must not request MusicKit developer credentials, a Team ID, Key ID, `.p8` key, or Apple Developer Program enrollment.
+- Preserve the compact calendar widget layout, but source its events from the user's iCloud Calendar through the local backend. iCloud credentials must use an Apple app-specific password, be protected with Windows DPAPI, and never be echoed back to the frontend.
 
 Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.

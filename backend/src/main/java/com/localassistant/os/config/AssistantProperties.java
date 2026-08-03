@@ -6,8 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class AssistantProperties {
     private String dataDir = "../data";
     private String workspaceRoot = "..";
-    private String openaiApiKey = 
-        "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";
+    private String openaiApiKey = "";
     private String openaiModel = "gpt-5.6-sol";
     private String reasoningEffort = "medium";
 

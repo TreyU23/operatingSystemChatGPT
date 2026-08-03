@@ -1,5 +1,7 @@
 package com.localassistant.os.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.localassistant.os.config.AssistantProperties;
 import com.sun.management.OperatingSystemMXBean;
 import java.io.File;
@@ -8,7 +10,11 @@ import java.net.NetworkInterface;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayDeque;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -38,6 +44,7 @@ public class SystemService {
             Map.entry("teams", new AppDefinition("Microsoft Teams", "Collaboration active", "teams")));
 
     private final Path workspaceRoot;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public SystemService(AssistantProperties properties) {
         workspaceRoot = Path.of(properties.getWorkspaceRoot()).toAbsolutePath().normalize();
@@ -100,12 +107,154 @@ public class SystemService {
         Path packagePath = Path.of(environment("LOCALAPPDATA", "."), "Packages", "Microsoft.YourPhone_8wekyb3d8bbwe");
         boolean installed = windows && Files.isDirectory(packagePath);
         boolean running = ProcessHandle.allProcesses().anyMatch(process ->
-                process.info().command().orElse("").toLowerCase(Locale.ROOT).contains("phoneexperiencehost"));
+                process.info().command().orElse("").toLowerCase(Locale.ROOT).matches(".*(phoneexperiencehost|crossdevice).*"));
+
+        Path metadataPath = packagePath.resolve("LocalCache").resolve("DeviceMetadataStorage.json");
+        Path companionPath = packagePath.resolve("LocalState").resolve("StartMenu").resolve("StartMenuCompanion.json");
+        Optional<PhoneDevice> device = installed ? readPhoneDevice(metadataPath) : Optional.empty();
+        Instant companionUpdatedAt = modifiedAt(companionPath).orElse(null);
+        Instant metadataUpdatedAt = modifiedAt(metadataPath).orElse(null);
+        Instant lastSeenAt = device.map(PhoneDevice::lastSeenAt).orElse(null);
+        Instant lastSyncedAt = latest(companionUpdatedAt, metadataUpdatedAt, lastSeenAt);
+        boolean connected = running
+                && companionUpdatedAt != null
+                && companionUpdatedAt.isAfter(Instant.now().minusSeconds(10 * 60));
+        Integer batteryPercent = installed ? readBatteryPercent(companionPath).orElse(null) : null;
+        boolean notificationsAvailable = installed && containsNotificationSignal(companionPath);
+        String detail = !installed
+                ? "Phone Link is not installed"
+                : connected
+                        ? "Connected through Phone Link"
+                        : running ? "Phone Link is running" : "Ready to open";
+
         return new PhoneLinkInfo(
                 installed,
                 running,
-                installed ? (running ? "Connected app is running" : "Ready to open") : "Phone Link is not installed",
+                connected,
+                device.map(PhoneDevice::displayName).orElse("Linked phone"),
+                device.map(PhoneDevice::manufacturer).orElse("Unknown"),
+                device.map(PhoneDevice::model).orElse("Unknown"),
+                device.map(PhoneDevice::osName).orElse("Phone"),
+                batteryPercent,
+                notificationsAvailable,
+                lastSeenAt == null ? null : lastSeenAt.toString(),
+                lastSyncedAt == null ? null : lastSyncedAt.toString(),
+                Instant.now().toString(),
+                detail,
                 "ms-phone:");
+    }
+
+    private Optional<PhoneDevice> readPhoneDevice(Path metadataPath) {
+        if (!Files.isRegularFile(metadataPath)) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(metadataPath.toFile());
+            JsonNode deviceGroups = root.path("DeviceMetadatas");
+            PhoneDevice newest = null;
+            Iterator<Map.Entry<String, JsonNode>> groups = deviceGroups.fields();
+            while (groups.hasNext()) {
+                JsonNode candidates = groups.next().getValue();
+                if (!candidates.isArray()) {
+                    continue;
+                }
+                for (JsonNode candidate : candidates) {
+                    if (!candidate.path("IsLinked").asBoolean(false)) {
+                        continue;
+                    }
+                    JsonNode envelope = candidate.path("Metadata");
+                    JsonNode metadata = envelope.path("Metadata");
+                    String osName = metadata.path("OsName").asText("");
+                    if (osName.equalsIgnoreCase("Windows")) {
+                        continue;
+                    }
+                    Instant lastSeen = parseInstant(envelope.path("LastSeenTime").asText(null));
+                    PhoneDevice current = new PhoneDevice(
+                            metadata.path("DisplayName").asText("Linked phone"),
+                            metadata.path("Manufacture").asText("Unknown"),
+                            metadata.path("ModelName").asText("Unknown"),
+                            osName.isBlank() ? "Phone" : osName,
+                            lastSeen);
+                    if (newest == null || current.lastSeenAt().isAfter(newest.lastSeenAt())) {
+                        newest = current;
+                    }
+                }
+            }
+            return Optional.ofNullable(newest);
+        } catch (Exception ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private Optional<Integer> readBatteryPercent(Path companionPath) {
+        if (!Files.isRegularFile(companionPath)) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(companionPath.toFile());
+            ArrayDeque<JsonNode> queue = new ArrayDeque<>();
+            queue.add(root);
+            while (!queue.isEmpty()) {
+                JsonNode current = queue.removeFirst();
+                if (current.isTextual()) {
+                    String value = current.asText().trim();
+                    if (value.matches("\\d{1,3}%")) {
+                        int percent = Integer.parseInt(value.substring(0, value.length() - 1));
+                        return Optional.of(Math.max(0, Math.min(100, percent)));
+                    }
+                } else if (current.isContainerNode()) {
+                    current.elements().forEachRemaining(queue::addLast);
+                }
+            }
+        } catch (Exception ignored) {
+            // Phone Link may replace the companion file while it is being read.
+        }
+        return Optional.empty();
+    }
+
+    private boolean containsNotificationSignal(Path companionPath) {
+        if (!Files.isRegularFile(companionPath)) {
+            return false;
+        }
+        try {
+            String content = Files.readString(companionPath).toLowerCase(Locale.ROOT);
+            return content.contains("new messages are available") || content.contains("notification");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private Optional<Instant> modifiedAt(Path path) {
+        try {
+            return Files.isRegularFile(path) ? Optional.of(Files.getLastModifiedTime(path).toInstant()) : Optional.empty();
+        } catch (Exception ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private Instant latest(Instant... values) {
+        Instant latest = null;
+        for (Instant value : values) {
+            if (value != null && (latest == null || value.isAfter(latest))) {
+                latest = value;
+            }
+        }
+        return latest;
+    }
+
+    private Instant parseInstant(String value) {
+        if (value == null || value.isBlank()) {
+            return Instant.EPOCH;
+        }
+        try {
+            return OffsetDateTime.parse(value).toInstant();
+        } catch (DateTimeParseException ignored) {
+            try {
+                return Instant.parse(value);
+            } catch (DateTimeParseException ignoredAgain) {
+                return Instant.EPOCH;
+            }
+        }
     }
 
     public ControlDefinition control(String id) {
@@ -258,7 +407,23 @@ public class SystemService {
 
     public record RunningApp(String id, String name, String detail, String icon, boolean running) {}
 
-    public record PhoneLinkInfo(boolean installed, boolean running, String detail, String uri) {}
+    public record PhoneLinkInfo(
+            boolean installed,
+            boolean running,
+            boolean connected,
+            String deviceName,
+            String manufacturer,
+            String model,
+            String osName,
+            Integer batteryPercent,
+            boolean notificationsAvailable,
+            String lastSeenAt,
+            String lastSyncedAt,
+            String capturedAt,
+            String detail,
+            String uri) {}
 
     private record AppDefinition(String name, String detail, String icon) {}
+
+    private record PhoneDevice(String displayName, String manufacturer, String model, String osName, Instant lastSeenAt) {}
 }

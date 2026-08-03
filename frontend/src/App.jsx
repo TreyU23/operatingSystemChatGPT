@@ -7,15 +7,15 @@ const ICON_COMPONENTS = {
   Bot: "FiCpu", CalendarDays: "FiCalendar", Camera: "FiCamera", Check: "FiCheck",
   ChevronLeft: "FiChevronLeft", ChevronRight: "FiChevronRight", Chrome: "FiGlobe", Circle: "FiCircle",
   CircleAlert: "FiAlertCircle", CircleCheck: "FiCheckCircle", Clipboard: "FiClipboard", Cpu: "FiCpu",
-  ExternalLink: "FiExternalLink", Globe2: "FiGlobe", HardDrive: "FiHardDrive", House: "FiHome",
+  Copy: "FiCopy", ExternalLink: "FiExternalLink", Globe2: "FiGlobe", HardDrive: "FiHardDrive", House: "FiHome",
   Info: "FiInfo", Layers3: "FiLayers", Link2: "FiLink2", LoaderCircle: "FiLoader", Mail: "FiMail",
   MemoryStick: "FiServer", MessageCircle: "FiMessageCircle", MessageSquareMore: "FiMessageSquare",
   MessagesSquare: "FiMessageSquare", Mic: "FiMic", Monitor: "FiMonitor", Moon: "FiMoon",
   Music2: "FiMusic", Network: "FiWifi", PanelsTopLeft: "FiGrid", Pause: "FiPause", Play: "FiPlay",
-  Plus: "FiPlus", Presentation: "FiPieChart", RefreshCw: "FiRefreshCw", Search: "FiSearch",
+  Plus: "FiPlus", Power: "FiPower", Presentation: "FiPieChart", RefreshCw: "FiRefreshCw", RotateCw: "FiRotateCw", Search: "FiSearch",
   Send: "FiSend", Settings: "FiSettings", Sheet: "FiGrid", Shield: "FiShield", ShieldCheck: "FiShield",
   Shuffle: "FiShuffle", SkipBack: "FiSkipBack", SkipForward: "FiSkipForward", Smartphone: "FiSmartphone",
-  Sparkles: "FiZap", Sun: "FiSun", Trash2: "FiTrash2", UsersRound: "FiUsers", Volume2: "FiVolume2",
+  Sparkles: "FiZap", Sun: "FiSun", Trash2: "FiTrash2", UsersRound: "FiUsers", Volume2: "FiVolume2", VolumeX: "FiVolumeX",
   Wifi: "FiWifi", X: "FiX",
 };
 
@@ -67,12 +67,67 @@ const FALLBACK_APPS = [
   { id: "powerpnt", name: "PowerPoint", detail: "Q3 Planning Deck.pptx", icon: "powerpoint", running: true, age: "3h ago" },
 ];
 
+const EMPTY_ICLOUD_CALENDAR = {
+  connected: false,
+  email: "",
+  status: "disconnected",
+  detail: "Connect iCloud Calendar in Settings.",
+  date: "",
+  events: [],
+  capturedAt: null,
+};
+
+const EMPTY_MUSIC_PLAYER = {
+  available: false,
+  ready: false,
+  playing: false,
+  title: "Nothing playing",
+  artist: "Apple Music",
+  album: "Start a track in Apple Music or the web player",
+  artwork: "/assets/album-cover.png",
+  elapsed: 0,
+  duration: 0,
+  shuffled: false,
+  muted: false,
+  detail: "Start playback once, then Live Desktop can control it through Windows.",
+};
+
 const NAV_ITEMS = [
   { id: "home", label: "Home", icon: "House" },
+  { id: "music", label: "Music", icon: "Music2" },
   { id: "approvals", label: "Approvals", icon: "ShieldCheck" },
   { id: "memories", label: "Memories", icon: "Bookmark" },
   { id: "conversations", label: "Conversations", icon: "MessagesSquare" },
 ];
+
+const MUSIC_CONNECTION_KEY = "live-desktop.apple-music";
+const THEME_KEY = "live-desktop.theme";
+const APPLE_MUSIC_STARTER = {
+  sourceUrl: "https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb",
+  embedUrl: "https://embed.music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb",
+};
+function normalizeAppleMusicUrl(value) {
+  const url = new URL(value.trim());
+  if (url.protocol !== "https:" || !["music.apple.com", "embed.music.apple.com"].includes(url.hostname)) {
+    throw new Error("Paste a valid Apple Music song, album, or playlist link.");
+  }
+  url.hostname = "embed.music.apple.com";
+  return url.toString();
+}
+
+function formatPlaybackTime(seconds) {
+  const safe = Number.isFinite(Number(seconds)) ? Math.max(0, Number(seconds)) : 0;
+  return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, "0")}`;
+}
+
+function readMusicConnection() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(MUSIC_CONNECTION_KEY));
+    return saved?.embedUrl ? saved : APPLE_MUSIC_STARTER;
+  } catch {
+    return APPLE_MUSIC_STARTER;
+  }
+}
 
 const APP_ICON_ASSETS = {
   code: "/assets/app-vscode.svg",
@@ -90,6 +145,24 @@ async function api(path, options = {}) {
     throw new Error(payload?.error || `Request failed (${response.status})`);
   }
   return payload;
+}
+
+const delay = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+async function waitForRestartReady() {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    try {
+      const response = await fetch(`${API_BASE}/api/runtime?restart=${Date.now()}`, { cache: "no-store" });
+      if (response.ok) {
+        const status = await response.json();
+        if (status.backendOnline && status.frontendOnline) return true;
+      }
+    } catch {
+      // Both services are expected to disappear briefly during a restart.
+    }
+    await delay(1000);
+  }
+  return false;
 }
 
 function Icon({ name, size = 20, strokeWidth = 1.8, className = "" }) {
@@ -131,6 +204,48 @@ function formatBytes(value, digits = 1) {
 function percent(part, total) {
   if (!total) return 0;
   return Math.max(0, Math.min(100, Math.round((part / total) * 100)));
+}
+
+function formatRelativeTime(value) {
+  if (!value) return "Not available";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "Not available";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 10) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function localDateAtOffset(dayOffset = 0) {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + dayOffset);
+  return date;
+}
+
+function localIsoDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function eventTime(event) {
+  if (event.allDay) return "All day";
+  return new Date(event.start).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function eventDuration(event) {
+  if (event.allDay) return "All day";
+  const minutes = Math.max(0, Math.round((new Date(event.end) - new Date(event.start)) / 60000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
 }
 
 function MeterSparkline({ value = 40 }) {
@@ -251,67 +366,91 @@ function InfoLine({ icon, label, value, healthy }) {
 }
 
 function RecentApps({ apps }) {
-  const displayApps = apps.length ? apps.slice(0, 5).map((app, index) => ({ ...app, age: index ? `${index * 12 + 1}m ago` : "Now" })) : FALLBACK_APPS;
+  const [showAll, setShowAll] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+  const displayApps = apps.length ? apps.map((app, index) => ({ ...app, age: index ? `${index * 12 + 1}m ago` : "Now" })) : FALLBACK_APPS;
+  const visibleApps = showAll ? displayApps : displayApps.slice(0, 4);
   return (
     <section className="activity-column" aria-labelledby="activity-title">
       <div className="column-title-row">
         <h3 id="activity-title">Recent activity</h3>
-        <button type="button" className="text-action">View all</button>
+        <button type="button" className="text-action" onClick={() => setShowAll((value) => !value)}>{showAll ? "Compact" : "View all"}</button>
       </div>
       <div className="app-list">
-        {displayApps.map((app) => (
-          <button className="app-row" type="button" key={app.id} onClick={() => {}}>
-            <BrandIcon app={app} />
-            <span>
-              <strong>{app.name}</strong>
-              <small>{app.detail}</small>
-            </span>
-            <time>{app.age}</time>
-          </button>
+        {visibleApps.map((app) => (
+          <div className={`app-row-wrap ${selectedId === app.id ? "app-row-wrap--selected" : ""}`} key={app.id}>
+            <button className="app-row" type="button" aria-expanded={selectedId === app.id} onClick={() => setSelectedId((value) => value === app.id ? null : app.id)}>
+              <BrandIcon app={app} />
+              <span>
+                <strong>{app.name}</strong>
+                <small>{app.detail}</small>
+              </span>
+              <time>{app.age}</time>
+            </button>
+            {selectedId === app.id ? <p className="app-inline-detail"><Icon name="Activity" size={14} /> Detected from the live Windows process list.</p> : null}
+          </div>
         ))}
       </div>
-      <button className="text-action show-more" type="button">Show more <Icon name="ChevronRight" size={15} /></button>
+      <button className="text-action show-more" type="button" onClick={() => setShowAll((value) => !value)}>
+        {showAll ? "Show less" : "Show more"} <Icon name={showAll ? "ChevronLeft" : "ChevronRight"} size={15} />
+      </button>
     </section>
   );
 }
 
-function CalendarAndMedia() {
-  const [playing, setPlaying] = useState(true);
+function CalendarAndMedia({ calendar, calendarRefreshing, musicPlayer, musicConfigured, onCalendarDateChange, onRefreshCalendar, onOpenCalendarSettings, onOpenMusic, onMusicAction }) {
+  const [dayOffset, setDayOffset] = useState(0);
+  const [dayOpen, setDayOpen] = useState(false);
+  const calendarDate = localDateAtOffset(dayOffset);
+  const dateKey = localIsoDate(calendarDate);
+  const dateLabel = calendarDate.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+  const events = calendar.date === dateKey ? calendar.events || [] : [];
+
+  useEffect(() => {
+    onCalendarDateChange(dateKey);
+  }, [dateKey]);
   return (
     <section className="calendar-column" aria-labelledby="calendar-title">
       <div className="column-title-row">
         <div>
-          <h3 id="calendar-title">Calendar</h3>
-          <p>August 2, 2026</p>
+          <h3 id="calendar-title">iCloud Calendar</h3>
+          <p>{dateLabel}{calendar.connected ? ` · ${calendar.detail}` : ""}</p>
         </div>
         <div className="calendar-nav">
-          <button type="button" aria-label="Previous day"><Icon name="ChevronLeft" size={18} /></button>
-          <button type="button">Today</button>
-          <button type="button" aria-label="Next day"><Icon name="ChevronRight" size={18} /></button>
+          <button type="button" aria-label="Previous day" onClick={() => setDayOffset((value) => value - 1)}><Icon name="ChevronLeft" size={18} /></button>
+          <button type="button" onClick={() => setDayOffset(0)}>Today</button>
+          <button type="button" aria-label="Next day" onClick={() => setDayOffset((value) => value + 1)}><Icon name="ChevronRight" size={18} /></button>
+          <button type="button" aria-label="Refresh iCloud Calendar" onClick={() => onRefreshCalendar(dateKey)} disabled={calendarRefreshing || !calendar.connected}><Icon name="RefreshCw" size={15} className={calendarRefreshing ? "spin" : ""} /></button>
         </div>
       </div>
       <div className="agenda">
-        <AgendaItem time="10:00 AM" title="Design sync" detail="Microsoft Teams" duration="30m" active />
-        <AgendaItem time="1:00 PM" title="Project review" detail="Conf Room 3 / Teams" duration="1h" active />
-        <AgendaItem time="3:30 PM" title="Focus time" detail="No meetings" duration="2h" />
+        {!calendar.connected ? <button className="calendar-connect" type="button" onClick={onOpenCalendarSettings}><Icon name="CalendarDays" size={20} /><span><strong>Connect iCloud Calendar</strong><small>Show your real events in this dashboard.</small></span><Icon name="ChevronRight" size={16} /></button> : null}
+        {calendar.connected && calendar.status === "error" ? <div className="agenda-empty agenda-empty--error"><Icon name="CircleAlert" size={18} /> {calendar.detail}</div> : null}
+        {calendar.connected && calendar.status !== "error" && calendarRefreshing && calendar.date !== dateKey ? <div className="agenda-empty"><Icon name="LoaderCircle" size={18} className="spin" /> Syncing iCloud events…</div> : null}
+        {calendar.connected && calendar.status !== "error" && !calendarRefreshing && events.length === 0 ? <div className="agenda-empty"><Icon name="CalendarDays" size={18} /> No iCloud events for this day.</div> : null}
+        {events.map((event) => <AgendaItem key={event.id} time={eventTime(event)} title={event.title} detail={event.location || event.calendar || "iCloud"} duration={eventDuration(event)} active={new Date(event.start) <= new Date() && new Date(event.end) >= new Date()} />)}
       </div>
-      <button className="text-action" type="button">Open Calendar <Icon name="ExternalLink" size={14} /></button>
+      <button className="text-action" type="button" aria-expanded={dayOpen} onClick={() => setDayOpen((value) => !value)}>
+        {dayOpen ? "Close day view" : "Open day view"} <Icon name="ChevronRight" size={14} />
+      </button>
+      {dayOpen ? <div className="calendar-inline"><strong>{dateLabel}</strong><span>{calendar.connected ? `${events.length} iCloud event${events.length === 1 ? "" : "s"} · Synced ${formatRelativeTime(calendar.capturedAt)}` : "Connect your account in Settings to sync events."}</span></div> : null}
       <div className="media-widget">
-        <div className="media-label"><img src="/assets/app-apple-music.svg" alt="" /> Listening on Apple Music</div>
-        <div className="track">
-          <img src="/assets/album-cover.png" alt="Blurred album cover" />
-          <div><strong>Ataraxia</strong><span>Kiasmos</span><small>Blurred</small></div>
+        <div className="media-label">
+          <span><img src="/assets/app-apple-music.svg" alt="" /> Apple Music {musicPlayer.ready ? "· live" : ""}</span>
+          <button type="button" onClick={onOpenMusic}>{musicConfigured ? "Open player" : "Connect"}<Icon name="ChevronRight" size={13} /></button>
         </div>
-        <div className="progress"><i style={{ width: playing ? "42%" : "32%" }} /></div>
-        <div className="track-time"><span>1:42</span><span>5:28</span></div>
+        <div className="track">
+          <img src={musicPlayer.artwork} alt="Current Apple Music artwork" />
+          <div><strong>{musicPlayer.title}</strong><span>{musicPlayer.artist}</span><small>{musicPlayer.album}</small></div>
+        </div>
+        <div className="progress" aria-label="Playback progress"><i style={{ width: `${musicPlayer.duration ? Math.min(100, (musicPlayer.elapsed / musicPlayer.duration) * 100) : 0}%` }} /></div>
+        <div className="track-time"><span>{formatPlaybackTime(musicPlayer.elapsed)}</span><span>{formatPlaybackTime(musicPlayer.duration)}</span></div>
         <div className="media-controls">
-          <button type="button" aria-label="Shuffle"><Icon name="Shuffle" size={17} /></button>
-          <button type="button" aria-label="Previous"><Icon name="SkipBack" size={18} /></button>
-          <button className="play-button" type="button" aria-label={playing ? "Pause" : "Play"} onClick={() => setPlaying((value) => !value)}>
-            <Icon name={playing ? "Pause" : "Play"} size={20} />
-          </button>
-          <button type="button" aria-label="Next"><Icon name="SkipForward" size={18} /></button>
-          <button type="button" aria-label="Volume"><Icon name="Volume2" size={18} /></button>
+          <button className={musicPlayer.shuffled ? "active" : ""} type="button" aria-label="Toggle shuffle" onClick={() => onMusicAction("shuffle")}><Icon name="Shuffle" size={16} /></button>
+          <button type="button" aria-label="Previous track" onClick={() => onMusicAction("previous")}><Icon name="SkipBack" size={19} /></button>
+          <button className="play-button" type="button" aria-label={musicPlayer.playing ? "Pause" : "Play"} onClick={() => onMusicAction(musicPlayer.playing ? "pause" : "play")}><Icon name={musicPlayer.playing ? "Pause" : "Play"} size={19} /></button>
+          <button type="button" aria-label="Next track" onClick={() => onMusicAction("next")}><Icon name="SkipForward" size={19} /></button>
+          <button className={musicPlayer.muted ? "active" : ""} type="button" aria-label="Toggle mute" onClick={() => onMusicAction("mute")}><Icon name={musicPlayer.muted ? "VolumeX" : "Volume2"} size={17} /></button>
         </div>
       </div>
     </section>
@@ -329,52 +468,60 @@ function AgendaItem({ time, title, detail, duration, active }) {
   );
 }
 
-function PhonePanel({ phone, onOpen, busy }) {
+function PhonePanel({ phone, onOpen, onRefresh, onCopy, busy, refreshing }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const ready = phone?.installed;
+  const connected = phone?.connected;
+  const lastSync = formatRelativeTime(phone?.lastSyncedAt);
   return (
     <aside className="phone-panel" aria-labelledby="phone-title">
       <div className="phone-title-row">
         <div><Icon name="Smartphone" size={18} /><h2 id="phone-title">Your phone</h2></div>
-        <button type="button" aria-label="Phone Link connection"><Icon name="Link2" size={20} /></button>
+        <button type="button" className="phone-refresh" aria-label="Refresh Phone Link information" onClick={onRefresh} disabled={refreshing}>
+          <Icon name="RefreshCw" size={19} className={refreshing ? "spin" : ""} />
+        </button>
       </div>
       <div className="phone-device">
-        <img src="/assets/phone-device.png" alt="Connected Android phone" />
+        <img src="/assets/phone-device.png" alt="Linked phone" />
         <div>
-          <h3>{ready ? "Android phone" : "Connect your phone"}</h3>
-          <span className={ready ? "connected" : "muted"}><i /> {phone?.detail || "Phone Link setup available"}</span>
+          <h3>{ready ? phone.deviceName || "Linked phone" : "Connect your phone"}</h3>
+          <span className={connected ? "connected" : "muted"}><i /> {phone?.detail || "Phone Link setup available"}</span>
+          {ready ? <small>{[phone.osName, phone.model !== "Unknown" ? phone.model : null].filter(Boolean).join(" · ")}</small> : null}
         </div>
       </div>
-      <div className="phone-section-title">
-        <strong>Notifications <b>{phone?.running ? "3" : "0"}</b></strong>
-        <span>Last sync: {phone?.running ? "just now" : "not connected"}</span>
+      <div className="phone-live-stats">
+        <div><span>Battery</span><strong>{phone?.batteryPercent == null ? "—" : `${phone.batteryPercent}%`}</strong></div>
+        <div><span>Last sync</span><strong>{lastSync}</strong></div>
       </div>
+      <div className="phone-section-title"><strong>Phone Link status</strong><span>Checked {formatRelativeTime(phone?.capturedAt)}</span></div>
       <div className="notification-list">
-        {phone?.running ? (
-          <>
-            <Notification icon="Mail" color="blue" label="Messages" detail="2 new messages" time="9:16 AM" />
-            <Notification icon="MessageCircle" color="green" label="Phone Link" detail="Device is connected" time="8:54 AM" />
-          </>
+        {phone?.notificationsAvailable ? (
+          <Notification icon="MessageCircle" color="green" label="Notifications available" detail="Open Phone Link only when you want to read private content." time={lastSync} />
         ) : (
           <div className="phone-empty">
             <Icon name="BellOff" size={22} />
-            <span>Notifications will appear after Phone Link is connected.</span>
+            <span>No new notification signal is available.</span>
           </div>
         )}
       </div>
-      <button className="text-action phone-notification-link" type="button" onClick={onOpen} disabled={busy || !ready}>
-        {ready ? "See phone notifications" : "Set up Phone Link"} <Icon name="ChevronRight" size={15} />
-      </button>
       <div className="phone-actions">
         <strong>Quick actions</strong>
         <div>
-          <PhoneAction icon="Send" label="Send files" onClick={onOpen} disabled={!ready || busy} />
-          <PhoneAction icon="Camera" label="Take photo" onClick={onOpen} disabled={!ready || busy} />
-          <PhoneAction icon="Clipboard" label="Share clipboard" onClick={onOpen} disabled={!ready || busy} />
-          <PhoneAction icon="Smartphone" label="Open phone" onClick={onOpen} disabled={!ready || busy} />
+          <PhoneAction icon="RefreshCw" label="Refresh" onClick={onRefresh} disabled={refreshing} />
+          <PhoneAction icon="Copy" label="Copy device" onClick={onCopy} disabled={!ready} />
+          <PhoneAction icon="Info" label="Details" onClick={() => setDetailsOpen((value) => !value)} disabled={!ready} active={detailsOpen} />
+          <PhoneAction icon="ExternalLink" label="Open app" onClick={onOpen} disabled={!ready || busy} />
         </div>
       </div>
+      {detailsOpen ? (
+        <div className="phone-details">
+          <InfoLine icon="Smartphone" label="Device" value={phone.deviceName || "Linked phone"} />
+          <InfoLine icon="Layers3" label="System" value={[phone.osName, phone.model].filter((value) => value && value !== "Unknown").join(" · ") || "Unknown"} />
+          <InfoLine icon="Activity" label="Last seen" value={formatRelativeTime(phone.lastSeenAt)} />
+        </div>
+      ) : null}
       <button className="text-action phone-settings" type="button" onClick={onOpen} disabled={!ready || busy}>
-        Phone Link settings <Icon name="ExternalLink" size={14} />
+        Open Phone Link externally <Icon name="ExternalLink" size={14} />
       </button>
     </aside>
   );
@@ -390,8 +537,8 @@ function Notification({ icon, color, label, detail, time }) {
   );
 }
 
-function PhoneAction({ icon, label, onClick, disabled }) {
-  return <button type="button" onClick={onClick} disabled={disabled}><Icon name={icon} size={18} /><span>{label}</span></button>;
+function PhoneAction({ icon, label, onClick, disabled, active = false }) {
+  return <button className={active ? "active" : ""} type="button" onClick={onClick} disabled={disabled}><Icon name={icon} size={18} /><span>{label}</span></button>;
 }
 
 function AssistantBar({ onSubmit, busy }) {
@@ -494,19 +641,193 @@ function ViewShell({ eyebrow, title, detail, children }) {
   return <main className="view-shell"><header><span>{eyebrow}</span><h1>{title}</h1><p>{detail}</p></header>{children}</main>;
 }
 
+function ShutdownDialog({ onCancel, onConfirm }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="lifecycle-dialog" role="dialog" aria-modal="true" aria-labelledby="shutdown-title">
+        <span className="dialog-icon dialog-icon--danger"><Icon name="Power" size={22} /></span>
+        <div>
+          <span className="dialog-eyebrow">Local services</span>
+          <h2 id="shutdown-title">Shut down Live Desktop?</h2>
+          <p>This stops both the frontend and backend. The current page will remain visible, but it cannot start the services again after they are off.</p>
+        </div>
+        <div className="dialog-actions">
+          <button type="button" onClick={onCancel}>Cancel</button>
+          <button className="danger-button" type="button" onClick={onConfirm}><Icon name="Power" size={16} /> Shut down both</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LifecycleNotice({ state }) {
+  if (state === "idle") return null;
+  const restarting = state === "restarting";
+  return (
+    <div className={`lifecycle-notice lifecycle-notice--${state}`} role="status">
+      <span className="dialog-icon"><Icon name={restarting ? "RotateCw" : "Power"} size={22} className={restarting ? "spin" : ""} /></span>
+      <div>
+        <strong>{restarting ? "Restarting Live Desktop" : "Live Desktop services are off"}</strong>
+        <span>{restarting ? "The dashboard will reconnect and reload automatically." : "Run the project launch scripts when you want to come back online."}</span>
+      </div>
+    </div>
+  );
+}
+
+function SettingsView({ darkMode, onDarkModeChange, calendar, onConnectCalendar, onDisconnectCalendar, musicConnection, musicPlayer, onSaveMusic, onDisconnectMusic, onRefreshMusic, onOpenMusic }) {
+  const [musicUrl, setMusicUrl] = useState(musicConnection.sourceUrl || "");
+  const [error, setError] = useState("");
+  const [calendarEmail, setCalendarEmail] = useState(calendar.email || "");
+  const [calendarPassword, setCalendarPassword] = useState("");
+  const [calendarError, setCalendarError] = useState("");
+  const [calendarBusy, setCalendarBusy] = useState(false);
+
+  useEffect(() => setMusicUrl(musicConnection.sourceUrl || ""), [musicConnection.sourceUrl]);
+
+  const saveMusic = (event) => {
+    event.preventDefault();
+    try {
+      const embedUrl = normalizeAppleMusicUrl(musicUrl);
+      onSaveMusic({ sourceUrl: musicUrl.trim(), embedUrl });
+      setError("");
+    } catch (urlError) {
+      setError(urlError.message);
+    }
+  };
+
+  const connectCalendar = async (event) => {
+    event.preventDefault();
+    setCalendarBusy(true);
+    setCalendarError("");
+    try {
+      await onConnectCalendar(calendarEmail, calendarPassword);
+      setCalendarPassword("");
+    } catch (connectionError) {
+      setCalendarError(connectionError.message);
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  return (
+    <main className="view-shell settings-view">
+      <header><span>Preferences</span><h1>Settings</h1><p>Connect services and choose how Live Desktop looks. Preferences and credentials stay local to this PC.</p></header>
+      <div className="settings-grid">
+        <section className="settings-card" aria-labelledby="appearance-title">
+          <div className="settings-card__icon"><Icon name={darkMode ? "Moon" : "Sun"} size={20} /></div>
+          <div className="settings-card__content">
+            <h2 id="appearance-title">Appearance</h2>
+            <p>Dark mode uses the completely black background selected for this dashboard.</p>
+          </div>
+          <button className={`toggle settings-toggle ${darkMode ? "toggle--on" : ""}`} type="button" role="switch" aria-checked={darkMode} aria-label="Dark mode" onClick={() => onDarkModeChange(!darkMode)}><span className="toggle__thumb" /></button>
+        </section>
+
+        <section className="settings-card settings-card--calendar" aria-labelledby="icloud-calendar-title">
+          <div className="settings-card__icon settings-card__icon--icloud"><Icon name="CalendarDays" size={21} /></div>
+          <div className="settings-card__content">
+            <div className="settings-title-row"><div><h2 id="icloud-calendar-title">iCloud Calendar</h2><p>Sync your Apple calendars into the dashboard’s existing day view.</p></div><span className={`connection-pill ${calendar.connected ? "connection-pill--on" : ""}`}>{calendar.connected ? "Connected" : "Not connected"}</span></div>
+            {calendar.connected ? (
+              <div className="connected-account-row"><div><strong>{calendar.email}</strong><span>{calendar.detail} · Last refreshed {formatRelativeTime(calendar.capturedAt)}</span></div><button className="secondary-button" type="button" onClick={onDisconnectCalendar}>Disconnect</button></div>
+            ) : (
+              <form className="icloud-connect-form" onSubmit={connectCalendar}>
+                <label htmlFor="icloud-email">Apple Account email</label>
+                <input id="icloud-email" type="email" value={calendarEmail} onChange={(event) => { setCalendarEmail(event.target.value); setCalendarError(""); }} autoComplete="username" placeholder="you@icloud.com" required />
+                <label htmlFor="icloud-app-password">App-specific password</label>
+                <input id="icloud-app-password" type="password" value={calendarPassword} onChange={(event) => { setCalendarPassword(event.target.value); setCalendarError(""); }} autoComplete="new-password" placeholder="xxxx-xxxx-xxxx-xxxx" required />
+                <div className="icloud-form-actions"><button className="primary-button" type="submit" disabled={calendarBusy}>{calendarBusy ? "Connecting…" : "Connect iCloud Calendar"}</button><a href="https://account.apple.com/account/manage" target="_blank" rel="noreferrer">Create an app-specific password <Icon name="ExternalLink" size={13} /></a></div>
+                <small>Use an app-specific password from Apple—never enter your regular Apple Account password. It is encrypted with Windows data protection and stays on this PC.</small>
+                {calendarError ? <p className="form-error" role="alert">{calendarError}</p> : null}
+              </form>
+            )}
+          </div>
+        </section>
+
+        <section className="settings-card settings-card--music" aria-labelledby="music-account-title">
+          <div className="settings-card__icon settings-card__icon--music"><img src="/assets/app-apple-music.svg" alt="" /></div>
+          <div className="settings-card__content">
+            <div className="settings-title-row"><div><h2 id="music-account-title">Apple Music</h2><p>Uses the free Apple web player and Windows’ built-in media controls. No developer account or API key.</p></div><span className="connection-pill connection-pill--on">No extra fee</span></div>
+
+            <div className="music-auth-row">
+              <div><strong>Local Windows media session</strong><span>{musicPlayer.available ? `${musicPlayer.title} · ${musicPlayer.detail}` : musicPlayer.detail}</span></div>
+              <button type="button" className="secondary-button" onClick={onRefreshMusic}><Icon name="RefreshCw" size={15} /> Refresh status</button>
+            </div>
+
+            <div className="free-integration-note"><Icon name="CircleCheck" size={18} /><div><strong>No paid developer membership required</strong><span>Sign in only inside Apple’s player. Live Desktop reads the active song and sends playback commands locally through Windows.</span></div></div>
+
+            <form className="music-link-form" onSubmit={saveMusic}>
+              <label htmlFor="apple-music-url">Playlist, album, or song link</label>
+              <div><input id="apple-music-url" type="url" value={musicUrl} onChange={(event) => setMusicUrl(event.target.value)} placeholder="https://music.apple.com/us/playlist/..." required /><button className="primary-button" type="submit">Connect link</button></div>
+              <small>In Apple Music, choose Share, copy the link, and paste it here. Open the full player and start a track once; the dashboard controls will then follow that Windows media session.</small>
+              {error ? <p className="form-error" role="alert">{error}</p> : null}
+            </form>
+
+            <div className="connected-actions"><button className="primary-button" type="button" onClick={onOpenMusic}><Icon name="Music2" size={16} /> Open full player</button><a className="secondary-button" href="https://music.apple.com/" target="_blank" rel="noreferrer"><Icon name="ExternalLink" size={15} /> Open Apple Music externally</a>{musicConnection.embedUrl ? <button className="text-action text-action--danger" type="button" onClick={onDisconnectMusic}>Disconnect playlist</button> : null}</div>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function MusicView({ musicConnection, musicPlayer, onMusicAction, onOpenSettings }) {
+  return (
+    <main className="music-view">
+      <header>
+        <div><span>Apple Music</span><h1>Your music</h1><p>Apple’s web player for browsing, with the original Live Desktop controls connected locally through Windows.</p></div>
+        <button className="secondary-button" type="button" onClick={onOpenSettings}><Icon name="Settings" size={16} /> Music settings</button>
+      </header>
+      <section className="music-stage">
+        <div className="music-stage__art"><img src={musicPlayer.artwork} alt="Current Apple Music artwork" /></div>
+        <div className="music-stage__player">
+          <div className="music-stage__source"><img src="/assets/app-apple-music.svg" alt="" /><span>{musicPlayer.available ? "Windows media session connected" : "Start a track in the player below"}</span></div>
+          <h2>{musicPlayer.title}</h2><p>{musicPlayer.artist}</p><small>{musicPlayer.album}</small>
+          <div className="progress music-stage__progress"><i style={{ width: `${musicPlayer.duration ? Math.min(100, (musicPlayer.elapsed / musicPlayer.duration) * 100) : 0}%` }} /></div>
+          <div className="track-time"><span>{formatPlaybackTime(musicPlayer.elapsed)}</span><span>{formatPlaybackTime(musicPlayer.duration)}</span></div>
+          <div className="media-controls music-stage__controls">
+            <button className={musicPlayer.shuffled ? "active" : ""} type="button" aria-label="Toggle shuffle" onClick={() => onMusicAction("shuffle")}><Icon name="Shuffle" size={20} /></button>
+            <button type="button" aria-label="Previous track" onClick={() => onMusicAction("previous")}><Icon name="SkipBack" size={26} /></button>
+            <button className="play-button" type="button" aria-label={musicPlayer.playing ? "Pause" : "Play"} onClick={() => onMusicAction(musicPlayer.playing ? "pause" : "play")}><Icon name={musicPlayer.playing ? "Pause" : "Play"} size={28} /></button>
+            <button type="button" aria-label="Next track" onClick={() => onMusicAction("next")}><Icon name="SkipForward" size={26} /></button>
+            <button className={musicPlayer.muted ? "active" : ""} type="button" aria-label="Toggle mute" onClick={() => onMusicAction("mute")}><Icon name={musicPlayer.muted ? "VolumeX" : "Volume2"} size={21} /></button>
+          </div>
+          <div className="music-stage__queue"><Icon name="Music2" size={17} /><span>{musicConnection.sourceUrl ? "Use the Apple player below to choose a track. Controls stay active across Live Desktop tabs." : "Choose a playlist, album, or song in Settings."}</span></div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 export function App() {
   const [activeView, setActiveView] = useState("home");
   const [system, setSystem] = useState(FALLBACK_SYSTEM);
   const [apps, setApps] = useState([]);
-  const [phone, setPhone] = useState({ installed: false, running: false, detail: "Checking Phone Link" });
+  const [phone, setPhone] = useState({ installed: false, running: false, connected: false, detail: "Checking Phone Link" });
+  const [calendar, setCalendar] = useState(EMPTY_ICLOUD_CALENDAR);
+  const [runtime, setRuntime] = useState({ backendOnline: false, frontendOnline: true });
   const [health, setHealth] = useState({ connected: false, configured: false });
   const [actions, setActions] = useState([]);
   const [memories, setMemories] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [pendingControl, setPendingControl] = useState(null);
+  const [phoneRefreshing, setPhoneRefreshing] = useState(false);
+  const [calendarRefreshing, setCalendarRefreshing] = useState(false);
   const [assistantBusy, setAssistantBusy] = useState(false);
+  const [lifecycleState, setLifecycleState] = useState("idle");
+  const [shutdownOpen, setShutdownOpen] = useState(false);
   const [toast, setToast] = useState(null);
+  const [darkMode, setDarkMode] = useState(() => window.localStorage.getItem(THEME_KEY) !== "light");
+  const [musicConnection, setMusicConnection] = useState(readMusicConnection);
+  const [musicPlayer, setMusicPlayer] = useState(EMPTY_MUSIC_PLAYER);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = darkMode ? "dark" : "light";
+    window.localStorage.setItem(THEME_KEY, darkMode ? "dark" : "light");
+  }, [darkMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(MUSIC_CONNECTION_KEY, JSON.stringify(musicConnection));
+  }, [musicConnection]);
 
   const notify = useCallback((message, tone = "neutral") => {
     setToast({ message, tone });
@@ -523,6 +844,8 @@ export function App() {
       api("/api/actions"),
       api("/api/memories"),
       api("/api/conversations"),
+      api("/api/runtime"),
+      api(`/api/integrations/icloud-calendar?date=${localIsoDate(localDateAtOffset())}`),
     ]);
     if (results[0].status === "fulfilled") setHealth({ connected: true, configured: Boolean(results[0].value.openAiConfigured) });
     else setHealth({ connected: false, configured: false });
@@ -532,13 +855,60 @@ export function App() {
     if (results[4].status === "fulfilled") setActions(results[4].value);
     if (results[5].status === "fulfilled") setMemories(results[5].value);
     if (results[6].status === "fulfilled") setConversations(results[6].value);
+    if (results[7].status === "fulfilled") setRuntime(results[7].value);
+    if (results[8].status === "fulfilled") setCalendar(results[8].value);
   }, []);
+
+  const refreshMusicPlayer = useCallback(async (announce = false) => {
+    try {
+      const latest = await api("/api/integrations/media-session");
+      setMusicPlayer((current) => ({ ...current, ...latest }));
+      if (announce) notify(latest.available ? "Windows media session refreshed." : latest.detail, latest.available ? "success" : "neutral");
+      return latest;
+    } catch (error) {
+      if (announce) notify(error.message, "error");
+      return null;
+    }
+  }, [notify]);
+
+  const refreshPhone = useCallback(async (announce = false) => {
+    setPhoneRefreshing(true);
+    try {
+      const latest = await api(`/api/integrations/phone-link?refresh=${Date.now()}`);
+      setPhone(latest);
+      if (announce) notify("Phone Link information refreshed.", "success");
+    } catch (error) {
+      if (announce) notify(error.message, "error");
+    } finally {
+      setPhoneRefreshing(false);
+    }
+  }, [notify]);
+
+  const refreshCalendar = useCallback(async (date, announce = false) => {
+    setCalendarRefreshing(true);
+    try {
+      const latest = await api(`/api/integrations/icloud-calendar?date=${date}${announce ? `&refresh=${Date.now()}` : ""}`);
+      setCalendar(latest);
+      if (announce) notify("iCloud Calendar refreshed.", "success");
+    } catch (error) {
+      if (announce) notify(error.message, "error");
+    } finally {
+      setCalendarRefreshing(false);
+    }
+  }, [notify]);
 
   useEffect(() => {
     loadDashboard();
+    refreshMusicPlayer(false);
     const timer = window.setInterval(loadDashboard, 15000);
-    return () => window.clearInterval(timer);
-  }, [loadDashboard]);
+    const phoneTimer = window.setInterval(() => refreshPhone(false), 5000);
+    const mediaTimer = window.setInterval(() => refreshMusicPlayer(false), 5000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearInterval(phoneTimer);
+      window.clearInterval(mediaTimer);
+    };
+  }, [loadDashboard, refreshPhone, refreshMusicPlayer]);
 
   const controls = useMemo(() => {
     const byId = new Map(system.controls.map((control) => [control.id, control]));
@@ -553,7 +923,6 @@ export function App() {
       await api(`/api/system/controls/${id}`, { method: "POST" });
       notify(`${CONTROL_META[id].label} settings added to approvals.`, "success");
       await loadDashboard();
-      setActiveView("approvals");
     } catch (error) {
       notify(error.message, "error");
     } finally {
@@ -565,13 +934,41 @@ export function App() {
     setPendingControl("phone");
     try {
       await api("/api/integrations/phone-link/open", { method: "POST" });
-      notify("Phone Link added to approvals.", "success");
+      notify("Phone Link launch added to approvals. The dashboard will stay open.", "success");
       await loadDashboard();
-      setActiveView("approvals");
     } catch (error) {
       notify(error.message, "error");
     } finally {
       setPendingControl(null);
+    }
+  };
+
+  const copyPhoneName = async () => {
+    try {
+      await navigator.clipboard.writeText(phone.deviceName || "Linked phone");
+      notify("Device name copied.", "success");
+    } catch {
+      notify("Clipboard access is unavailable in this browser.", "error");
+    }
+  };
+
+  const runLifecycle = async (action) => {
+    if (lifecycleState !== "idle") return;
+    setShutdownOpen(false);
+    setLifecycleState(action === "restart" ? "restarting" : "shutting-down");
+    try {
+      await api(`/api/runtime/${action}`, { method: "POST" });
+      if (action === "shutdown") {
+        await delay(1800);
+        setLifecycleState("offline");
+        return;
+      }
+      const ready = await waitForRestartReady();
+      if (!ready) throw new Error("Live Desktop did not come back online within one minute.");
+      window.location.reload();
+    } catch (error) {
+      setLifecycleState("idle");
+      notify(error.message, "error");
     }
   };
 
@@ -631,6 +1028,49 @@ export function App() {
     }
   };
 
+  const connectICloudCalendar = async (email, appSpecificPassword) => {
+    const connectedCalendar = await api("/api/integrations/icloud-calendar/connect", {
+      method: "POST",
+      body: JSON.stringify({ email, appSpecificPassword }),
+    });
+    setCalendar(connectedCalendar);
+    notify("iCloud Calendar connected and synced.", "success");
+  };
+
+  const disconnectICloudCalendar = async () => {
+    try {
+      setCalendar(await api("/api/integrations/icloud-calendar", { method: "DELETE" }));
+      notify("iCloud Calendar disconnected. Stored credentials were removed.", "success");
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  };
+
+  const controlAppleMusic = async (action) => {
+    try {
+      if (!musicPlayer.available) {
+        setActiveView("music");
+        notify("Start a track in the Apple player once, then these controls will follow it through Windows.", "neutral");
+        return;
+      }
+      const updated = await api(`/api/integrations/media-session/${action}`, { method: "POST" });
+      setMusicPlayer((current) => ({ ...current, ...updated, muted: action === "mute" ? !current.muted : current.muted }));
+      if (updated.actionSucceeded === false) notify("That media session did not accept the command.", "error");
+    } catch (error) {
+      notify(error.message || "Windows could not complete that media action.", "error");
+    }
+  };
+
+  const saveMusicConnection = (connection) => {
+    setMusicConnection(connection);
+    notify("Apple Music link connected.", "success");
+  };
+
+  const disconnectMusic = () => {
+    setMusicConnection({ sourceUrl: "", embedUrl: "" });
+    notify("Apple Music playlist disconnected.", "success");
+  };
+
   return (
     <div className="desktop-shell">
       <header className="topbar">
@@ -639,14 +1079,21 @@ export function App() {
           {NAV_ITEMS.map((item) => <button type="button" key={item.id} className={activeView === item.id ? "active" : ""} onClick={() => setActiveView(item.id)}><Icon name={item.icon} size={19} />{item.label}{item.id === "approvals" && pendingCount ? <b>{pendingCount}</b> : null}</button>)}
         </nav>
         <div className="topbar-actions">
-          <span className="local-status"><i className={health.connected ? "" : "offline"} /><strong>{health.connected ? "Local mode" : "Preview mode"}</strong><small>{health.connected ? "All data stays on this PC" : "Backend is offline"}</small></span>
-          <button type="button" className="settings-button" onClick={() => { setActiveView("home"); window.setTimeout(() => document.getElementById("system-controls")?.focus(), 50); }}><Icon name="Settings" size={20} /><span>Settings</span></button>
+          <span className="local-status"><i className={health.connected && runtime.frontendOnline ? "" : "offline"} /><strong>{health.connected ? "Local mode" : "Preview mode"}</strong><small>{health.connected ? "All data stays on this PC" : "Backend is offline"}</small></span>
+          <div className="lifecycle-actions" aria-label="Project lifecycle controls">
+            <button type="button" aria-label="Restart frontend and backend" title="Restart frontend and backend" onClick={() => runLifecycle("restart")} disabled={lifecycleState !== "idle"}>
+              <Icon name="RotateCw" size={18} className={lifecycleState === "restarting" ? "spin" : ""} />
+            </button>
+            <button className="shutdown-button" type="button" aria-label="Shut down frontend and backend" title="Shut down frontend and backend" onClick={() => setShutdownOpen(true)} disabled={lifecycleState !== "idle"}>
+              <Icon name="Power" size={18} />
+            </button>
+          </div>
+          <button type="button" className={`settings-button ${activeView === "settings" ? "active" : ""}`} onClick={() => setActiveView("settings")}><Icon name="Settings" size={20} /><span>Settings</span></button>
           <img src="/assets/user-avatar.png" alt="Local user profile" />
         </div>
       </header>
 
-      {activeView === "home" ? (
-        <main className="home-view">
+      {activeView === "home" ? <main className="home-view">
           <section id="system-controls" className="control-strip" aria-label="System controls" tabIndex={-1}>
             {controls.map((control) => (
               <div className="control-item" key={control.id}>
@@ -665,20 +1112,31 @@ export function App() {
               <div className="today-columns">
                 <SystemHealth system={system} connected={health.connected} configured={health.configured} />
                 <RecentApps apps={apps} />
-                <CalendarAndMedia />
+                <CalendarAndMedia calendar={calendar} calendarRefreshing={calendarRefreshing} musicPlayer={musicPlayer} musicConfigured={Boolean(musicConnection.embedUrl)} onCalendarDateChange={(date) => refreshCalendar(date, false)} onRefreshCalendar={(date) => refreshCalendar(date, true)} onOpenCalendarSettings={() => setActiveView("settings")} onOpenMusic={() => setActiveView("music")} onMusicAction={controlAppleMusic} />
               </div>
             </section>
-            <PhonePanel phone={phone} onOpen={openPhone} busy={pendingControl === "phone"} />
+            <PhonePanel
+              phone={phone}
+              onOpen={openPhone}
+              onRefresh={() => refreshPhone(true)}
+              onCopy={copyPhoneName}
+              busy={pendingControl === "phone"}
+              refreshing={phoneRefreshing}
+            />
           </div>
-          <AssistantBar onSubmit={sendMessage} busy={assistantBusy} />
-          <p className="privacy-note">Local first. Private by design.</p>
-        </main>
-      ) : null}
+          {activeView === "home" ? <AssistantBar onSubmit={sendMessage} busy={assistantBusy} /> : null}
+          {activeView === "home" ? <p className="privacy-note">Local first. Private by design.</p> : null}
+      </main> : null}
 
       {activeView === "approvals" ? <ApprovalsView actions={actions} loading={false} onApprove={(id) => updateAction(id, "approve")} onReject={(id) => updateAction(id, "reject")} /> : null}
       {activeView === "memories" ? <MemoriesView memories={memories} onCreate={createMemory} onDelete={deleteMemory} /> : null}
       {activeView === "conversations" ? <ConversationsView conversations={conversations} selected={selectedConversation} onSelect={selectConversation} onSend={sendMessage} busy={assistantBusy} /> : null}
+      {activeView === "music" ? <MusicView musicConnection={musicConnection} musicPlayer={musicPlayer} onMusicAction={controlAppleMusic} onOpenSettings={() => setActiveView("settings")} /> : null}
+      {musicConnection.embedUrl ? <div className={`music-web-player ${activeView === "music" ? "" : "music-web-player--parked"}`} aria-hidden={activeView !== "music"}><iframe title="Apple Music web player" src={musicConnection.embedUrl} allow="autoplay *; encrypted-media *; fullscreen *; clipboard-write" loading="eager" /></div> : null}
+      {activeView === "settings" ? <SettingsView darkMode={darkMode} onDarkModeChange={setDarkMode} calendar={calendar} onConnectCalendar={connectICloudCalendar} onDisconnectCalendar={disconnectICloudCalendar} musicConnection={musicConnection} musicPlayer={musicPlayer} onSaveMusic={saveMusicConnection} onDisconnectMusic={disconnectMusic} onRefreshMusic={() => refreshMusicPlayer(true)} onOpenMusic={() => setActiveView("music")} /> : null}
 
+      {shutdownOpen ? <ShutdownDialog onCancel={() => setShutdownOpen(false)} onConfirm={() => runLifecycle("shutdown")} /> : null}
+      <LifecycleNotice state={lifecycleState} />
       {toast ? <div className={`toast toast--${toast.tone}`} role="status"><Icon name={toast.tone === "error" ? "CircleAlert" : "CircleCheck"} size={18} />{toast.message}<button type="button" onClick={() => setToast(null)} aria-label="Dismiss"><Icon name="X" size={16} /></button></div> : null}
     </div>
   );
