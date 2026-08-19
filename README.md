@@ -1,12 +1,13 @@
 # Live Desktop
 
-Live Desktop is a local-first Windows dashboard and assistant. A React/Vite frontend provides system controls, system information, conversations, memories, approvals, iCloud Calendar, a custom Apple Music player, Phone Link status, and one-click project lifecycle controls. A Java 21/Spring Boot backend owns local state, OpenAI requests, Windows inspection, integrations, and approved actions.
+Live Desktop is a local-first Windows dashboard and assistant. A React/Vite frontend provides system controls, system information, conversations, memories, approvals, iCloud Calendar, a custom Apple Music or Spotify player, Phone Link status, and one-click project lifecycle controls. A Java 21/Spring Boot backend owns local state, OpenAI requests, Windows inspection, integrations, and approved actions.
 
 This is a desktop-style assistant application, not an operating-system kernel. The backend binds to `127.0.0.1:4317`; the development frontend runs at `http://localhost:4173` and proxies `/api` and `/health` to the backend.
 
 ## Current capabilities
 
-- True-black dashboard with a persistent dark/light appearance preference.
+- Local profile picker with profile names, uploaded avatars, isolated app data, credentials, integration links, and appearance preferences.
+- True-black dashboard with a per-profile persistent dark/light appearance preference.
 - Live CPU, memory, storage, network, battery, Windows, backend, and OpenAI status.
 - Approval-backed shortcuts to Windows Wi-Fi, Bluetooth, Focus, Night light, microphone privacy, and battery-saver settings.
 - OpenAI-powered conversations using the official Java SDK.
@@ -14,8 +15,8 @@ This is a desktop-style assistant application, not an operating-system kernel. T
 - Inspectable local memories and conversation history.
 - Restart and shutdown controls for both frontend and backend.
 - iCloud Calendar day view using CalDAV, including recurring events.
-- Custom Apple Music player with artwork, metadata, progress, play/pause, previous/next, shuffle, and system mute. It uses the free Apple web player plus Windows' built-in media session controls, with no paid developer integration.
-- Microsoft Phone Link installation, process, linked-device, battery, notification-signal, and sync metadata detection.
+- Provider-switchable Apple Music and Spotify player with artwork, metadata, progress, play/pause, previous/next, shuffle, and system mute. It uses each service's web embed plus Windows' built-in media-session controls, with no developer credentials.
+- Microsoft Phone Link installation, process, linked-device, battery, notification-signal, and sync metadata detection, with iPhone or Android artwork selected from the detected device metadata.
 
 ## Project layout
 
@@ -34,13 +35,14 @@ Required:
 - Windows 10 or Windows 11 with PowerShell.
 - Java 21. The included bootstrap script can install a project-local Temurin JDK.
 - Node.js 20 or later and pnpm for a fresh frontend install. The Codex desktop environment is detected automatically when its bundled runtime is available.
-- Network access while installing dependencies and while using OpenAI, iCloud Calendar, or Apple Music.
+- Network access while installing dependencies and while using OpenAI, iCloud Calendar, Apple Music, or Spotify.
 
 Optional accounts depend on the features you use:
 
 - An OpenAI API project key with API billing/credits for the assistant.
 - An Apple Account with two-factor authentication for iCloud Calendar.
 - An Apple Music account if you want to play subscriber content; no Apple Developer Program membership or developer key is required.
+- A Spotify account if you want to use Spotify content beyond what its web embed makes available without sign-in; no Spotify developer application is required.
 - Microsoft Phone Link installed and paired with a phone for live phone metadata.
 
 ## First-time setup
@@ -78,6 +80,10 @@ Codex desktop users can normally skip the global pnpm installation because `scri
 
 ### 4. Configure the OpenAI API key
 
+Recommended: open **Settings → OpenAI API key** after launch and save a separate key for each local profile. The backend protects profile keys with Windows DPAPI and never returns them to the browser.
+
+For the original `default` profile only, an environment key remains available as a setup fallback:
+
 Copy the configuration template and edit the local `.env` file:
 
 ```powershell
@@ -103,7 +109,7 @@ DATA_DIR=../data
 WORKSPACE_ROOT=..
 ```
 
-`.env` is ignored by Git. Never commit, paste into source code, or share an API key.
+`.env` is ignored by Git. Never commit, paste into source code, or share an API key. Additional profiles do not inherit the environment key; save their own key in Settings.
 
 Alternatively, store the key as a Windows user environment variable without putting it directly in PowerShell history:
 
@@ -183,19 +189,20 @@ The backend verifies the account before keeping it. The password is protected wi
 
 Changing or resetting the main Apple Account password revokes existing app-specific passwords. Generate a replacement and reconnect if calendar sync stops afterward. See Apple’s [app-specific password instructions](https://support.apple.com/en-us/102654).
 
-### Apple Music custom player
+### Apple Music or Spotify custom player
 
-The Apple Music integration intentionally uses no Apple Developer Program, developer token, private key, or additional paid API. It combines Apple's standard embedded web player with the media-session interface built into Windows 10/11.
+The music integration uses Apple Music or Spotify's standard embedded player together with the media-session interface built into Windows 10/11. It does not require an Apple Developer Program membership, MusicKit credentials, a Spotify developer application, OAuth client credentials, or an additional paid API.
 
-1. Open **Settings → Apple Music**.
-2. Paste a shared Apple Music playlist, album, or song URL, or keep the included starter playlist.
-3. Open the full player and sign in within Apple's player if the selected content requires it.
-4. Start a track once in either the embedded player or the Apple Music Windows app.
-5. Live Desktop detects the active Windows media session and begins showing its real title, artist, album, artwork when available, playback state, and timeline.
+1. Open **Settings → Music service**.
+2. Select **Apple Music** or **Spotify**. This selection replaces the service used by both the dashboard widget and full Music view.
+3. Paste a shared link. Apple Music accepts a playlist, album, or song; Spotify accepts a playlist, album, track, artist, show, or episode. Apple Music also includes a starter playlist.
+4. Open the full player and sign in within the selected service's player if the content requires it.
+5. Start a track once in the embedded player or the selected service's Windows app.
+6. Live Desktop detects the active Windows media session and begins showing its real title, artist, album, artwork when available, playback state, and timeline.
 
 The original dashboard controls then send play, pause, previous, next, and shuffle requests to the active Windows session. The volume button toggles Windows' system mute. The embedded player stays mounted offscreen when you switch Live Desktop tabs so playback can continue.
 
-No Apple password is stored by this integration. A shared Apple Music link is stored only in the browser's local storage. Windows 10 version 1809 or later is required for the system media-session API.
+No Apple or Spotify password is stored by this integration. Each provider's shared link and the selected provider are stored only in browser local storage. Both links are retained when you toggle providers, so switching back restores the prior player. Windows 10 version 1809 or later is required for the system media-session API.
 
 ### Microsoft Phone Link
 
@@ -210,12 +217,15 @@ The backend reads local Phone Link package metadata and running-process informat
 
 | Data | Location | Protection |
 | --- | --- | --- |
-| Conversations, memories, approvals | `data\assistant-state.json` | Local JSON, user-readable |
-| iCloud account record | `data\icloud-calendar-credentials.json` | Password encrypted with Windows DPAPI |
-| Theme and connected Apple Music link | Browser local storage | Local browser profile |
+| Default profile conversations, memories, approvals | `data\assistant-state.json` | Local JSON, user-readable |
+| Additional profile backend data | `data\profiles\<profile-id>\` | Separate local files per profile |
+| iCloud account and OpenAI key records | Default under `data\`; additional profiles under `data\profiles\<profile-id>\` | Secrets encrypted with Windows DPAPI |
+| Profile names, avatars, theme, accent color, selected music provider, and Apple Music/Spotify links | Browser local storage | Namespaced by local profile; uploaded avatars remain in this browser |
 | Lifecycle history | `data\runtime-control.log` | Local text log |
 
-DPAPI-protected values can only be decrypted by the same Windows user profile. Disconnect an integration in Settings to delete its saved credential record.
+DPAPI-protected values can only be decrypted by the same Windows user profile. Disconnect an integration in Settings to delete its saved credential record. Creating, renaming, switching, and uploading an avatar are available from the profile icon in the top bar. Deleting an additional profile removes its app-owned backend folder and browser profile metadata; the original default profile cannot be deleted.
+
+The selected music provider and both provider links are profile-specific. Authentication inside each embedded player remains controlled by that provider and the browser's third-party cookie storage, so the app never copies or stores a provider password or session token. The browser may reuse an embedded-player sign-in between local profiles.
 
 The model cannot execute arbitrary shell commands. System toggles create approval-backed actions that open the matching Windows Settings page. Phone Link launch uses the same approval path. Restart and confirmed shutdown are explicit local lifecycle operations.
 
@@ -275,13 +285,19 @@ The frontend build writes the browser assets to `frontend\dist\client`, the Site
 | `GET` | `/api/memories` | List memories |
 | `POST` | `/api/memories` | Create a memory |
 | `DELETE` | `/api/memories/{id}` | Delete a memory |
+| `GET` | `/api/profile/settings` | Read current-profile credential status |
+| `POST` | `/api/profile/openai-key` | Protect and save `{ "apiKey": "..." }` for the current profile |
+| `DELETE` | `/api/profile/openai-key` | Remove the current profile's saved OpenAI key |
+| `DELETE` | `/api/profile/data` | Delete all app-owned backend data for a non-default profile |
 | `GET` | `/api/integrations/phone-link` | Read current Phone Link metadata |
 | `POST` | `/api/integrations/phone-link/open` | Propose launching Phone Link |
 | `GET` | `/api/integrations/icloud-calendar?date=YYYY-MM-DD` | Read the selected day |
 | `POST` | `/api/integrations/icloud-calendar/connect` | Verify and save iCloud credentials |
 | `DELETE` | `/api/integrations/icloud-calendar` | Disconnect iCloud and remove credentials |
-| `GET` | `/api/integrations/media-session` | Read the active Windows media session |
-| `POST` | `/api/integrations/media-session/{action}` | Send play, pause, previous, next, shuffle, or mute locally |
+| `GET` | `/api/integrations/media-session?provider=apple|spotify` | Read the provider-preferred active Windows media session |
+| `POST` | `/api/integrations/media-session/{action}?provider=apple|spotify` | Send play, pause, previous, next, shuffle, or mute locally |
+
+The frontend sends `X-Profile-Id` on API requests. Calls without the header use the original `default` profile for backward compatibility.
 
 ## Troubleshooting
 
@@ -320,12 +336,12 @@ Get-NetTCPConnection -State Listen | Where-Object LocalPort -In 4173,4317
 - Generate a new app-specific password if the main Apple password was changed or reset.
 - Check internet access to `caldav.icloud.com`.
 
-### Apple Music controls say to start a track
+### Music controls say to start a track
 
-- Start one track manually in the embedded Apple player or Apple Music Windows app so Windows creates a media session.
+- Start one track manually in the selected embedded player or its Windows app so Windows creates a media session.
 - Select **Refresh status** in Settings after playback starts.
 - Confirm Windows is version 10 build 17763 or later.
-- Some browsers may not publish embedded audio as a Windows media session. If that occurs, use the Apple Music Windows app; the same Live Desktop controls will detect it automatically.
+- Some browsers may not publish embedded audio as a Windows media session. If that occurs, use the Apple Music or Spotify Windows app; the same Live Desktop controls prefer the selected provider's app session.
 - Keep the dashboard page open. Switching Live Desktop tabs preserves the embedded player, but closing the browser page ends that web-player session.
 
 ### Phone Link information is stale
@@ -336,6 +352,6 @@ Open Phone Link, confirm the phone is paired and reachable, then use the widget�
 
 - Backend: Java 21, Spring Boot 4.1, OpenAI Java SDK, ical4j.
 - Frontend: React 19, Vite 6, React Icons.
-- Apple Music: persistent Apple web embed plus Windows Global System Media Transport Controls.
+- Music: persistent provider-selected Apple Music or Spotify web embed plus Windows Global System Media Transport Controls.
 - Calendar: iCloud CalDAV with local recurrence expansion.
 - Credential protection: Windows DPAPI, current-user scope.

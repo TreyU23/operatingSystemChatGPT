@@ -1,7 +1,7 @@
 package com.localassistant.os.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.localassistant.os.config.AssistantProperties;
+import com.localassistant.os.profile.ProfilePaths;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -15,14 +15,16 @@ import org.springframework.stereotype.Component;
 public class ICloudCredentialStore {
     private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(12);
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final Path credentialFile;
+    private final ProfilePaths profilePaths;
 
-    public ICloudCredentialStore(AssistantProperties properties) {
-        credentialFile = Path.of(properties.getDataDir()).toAbsolutePath().normalize()
-                .resolve("icloud-calendar-credentials.json");
+    public ICloudCredentialStore(ProfilePaths profilePaths) {
+        this.profilePaths = profilePaths;
     }
 
+    private Path credentialFile() { return profilePaths.file("icloud-calendar-credentials.json"); }
+
     public synchronized void save(String email, String appSpecificPassword) throws IOException {
+        Path credentialFile = credentialFile();
         Files.createDirectories(credentialFile.getParent());
         String protectedPassword = protect(appSpecificPassword);
         objectMapper.writeValue(credentialFile.toFile(), Map.of(
@@ -31,6 +33,7 @@ public class ICloudCredentialStore {
     }
 
     public synchronized Optional<Credentials> load() {
+        Path credentialFile = credentialFile();
         if (Files.notExists(credentialFile)) return Optional.empty();
         try {
             @SuppressWarnings("unchecked")
@@ -45,7 +48,7 @@ public class ICloudCredentialStore {
     }
 
     public synchronized void clear() throws IOException {
-        Files.deleteIfExists(credentialFile);
+        Files.deleteIfExists(credentialFile());
     }
 
     private String protect(String value) throws IOException {

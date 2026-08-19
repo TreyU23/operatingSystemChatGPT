@@ -5,6 +5,8 @@ import com.localassistant.os.model.Conversation;
 import com.localassistant.os.model.ConversationMessage;
 import com.localassistant.os.service.ActionService;
 import com.localassistant.os.service.MemoryService;
+import com.localassistant.os.service.ProfileCredentialStore;
+import com.localassistant.os.service.ProfileDataService;
 import com.localassistant.os.service.RuntimeService;
 import com.localassistant.os.service.ICloudCalendarService;
 import com.localassistant.os.service.WorkspaceService;
@@ -39,6 +41,8 @@ public class AssistantController {
     private final RuntimeService runtime;
     private final ICloudCalendarService iCloudCalendar;
     private final WindowsMediaSessionService mediaSession;
+    private final ProfileCredentialStore profileCredentials;
+    private final ProfileDataService profileData;
 
     public AssistantController(
             StateStore store,
@@ -49,7 +53,9 @@ public class AssistantController {
             SystemService system,
             RuntimeService runtime,
             ICloudCalendarService iCloudCalendar,
-            WindowsMediaSessionService mediaSession) {
+            WindowsMediaSessionService mediaSession,
+            ProfileCredentialStore profileCredentials,
+            ProfileDataService profileData) {
         this.store = store;
         this.agent = agent;
         this.actions = actions;
@@ -59,6 +65,8 @@ public class AssistantController {
         this.runtime = runtime;
         this.iCloudCalendar = iCloudCalendar;
         this.mediaSession = mediaSession;
+        this.profileCredentials = profileCredentials;
+        this.profileData = profileData;
     }
 
     @GetMapping("/health")
@@ -67,6 +75,41 @@ public class AssistantController {
                 "status", "ok",
                 "openAiConfigured", agent.configured(),
                 "workspaceRoot", workspace.root().toString());
+    }
+
+    @GetMapping("/api/profile/settings")
+    public Map<String, Object> profileSettings() {
+        return Map.of("openAiConfigured", agent.configured(), "profileApiKey", agent.profileKeyConfigured());
+    }
+
+    @PostMapping("/api/profile/openai-key")
+    public ResponseEntity<?> saveProfileOpenAiKey(@RequestBody OpenAiKeyRequest request) {
+        try {
+            profileCredentials.saveOpenAiKey(request.apiKey());
+            return ResponseEntity.ok(Map.of("openAiConfigured", true, "profileApiKey", true));
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(error(error));
+        }
+    }
+
+    @DeleteMapping("/api/profile/openai-key")
+    public ResponseEntity<?> deleteProfileOpenAiKey() {
+        try {
+            profileCredentials.clearOpenAiKey();
+            return ResponseEntity.ok(Map.of("openAiConfigured", agent.configured(), "profileApiKey", false));
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(error(error));
+        }
+    }
+
+    @DeleteMapping("/api/profile/data")
+    public ResponseEntity<?> deleteProfileData() {
+        try {
+            profileData.deleteCurrent();
+            return ResponseEntity.noContent().build();
+        } catch (Exception error) {
+            return ResponseEntity.badRequest().body(error(error));
+        }
     }
 
     @GetMapping("/api/conversations")
@@ -227,14 +270,16 @@ public class AssistantController {
     }
 
     @GetMapping("/api/integrations/media-session")
-    public Object mediaSession() {
-        return mediaSession.snapshot();
+    public Object mediaSession(@RequestParam(required = false, defaultValue = "music") String provider) {
+        return mediaSession.snapshot(provider);
     }
 
     @PostMapping("/api/integrations/media-session/{action}")
-    public ResponseEntity<?> controlMediaSession(@PathVariable String action) {
+    public ResponseEntity<?> controlMediaSession(
+            @PathVariable String action,
+            @RequestParam(required = false, defaultValue = "music") String provider) {
         try {
-            return ResponseEntity.ok(mediaSession.control(action));
+            return ResponseEntity.ok(mediaSession.control(action, provider));
         } catch (Exception error) {
             return ResponseEntity.badRequest().body(error(error));
         }
@@ -269,5 +314,6 @@ public class AssistantController {
     public record MemoryRequest(String content, String category) {}
 
     public record ICloudCalendarRequest(String email, String appSpecificPassword) {}
+    public record OpenAiKeyRequest(String apiKey) {}
 
 }

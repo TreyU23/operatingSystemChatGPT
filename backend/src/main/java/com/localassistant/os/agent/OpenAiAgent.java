@@ -3,9 +3,11 @@ package com.localassistant.os.agent;
 import com.localassistant.os.config.AssistantProperties;
 import com.localassistant.os.model.Conversation;
 import com.localassistant.os.model.ConversationMessage;
+import com.localassistant.os.profile.ProfileContext;
 import com.localassistant.os.service.ActionService;
 import com.localassistant.os.service.DashboardContextService;
 import com.localassistant.os.service.MemoryService;
+import com.localassistant.os.service.ProfileCredentialStore;
 import com.localassistant.os.service.WorkspaceService;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
@@ -46,32 +48,45 @@ public class OpenAiAgent {
     private final MemoryService memories;
     private final WorkspaceService workspace;
     private final DashboardContextService dashboardContext;
-    private final OpenAIClient client;
+    private final ProfileCredentialStore credentials;
 
     public OpenAiAgent(
             AssistantProperties properties,
             ActionService actions,
             MemoryService memories,
             WorkspaceService workspace,
-            DashboardContextService dashboardContext) {
+            DashboardContextService dashboardContext,
+            ProfileCredentialStore credentials) {
         this.properties = properties;
         this.actions = actions;
         this.memories = memories;
         this.workspace = workspace;
         this.dashboardContext = dashboardContext;
-        this.client = configured()
-                ? OpenAIOkHttpClient.builder().apiKey(properties.getOpenaiApiKey()).build()
-                : null;
+        this.credentials = credentials;
     }
 
     public boolean configured() {
-        return properties.getOpenaiApiKey() != null && !properties.getOpenaiApiKey().isBlank();
+        return apiKey() != null;
+    }
+
+    public boolean profileKeyConfigured() {
+        return credentials.loadOpenAiKey().isPresent();
+    }
+
+    private String apiKey() {
+        return credentials.loadOpenAiKey().orElseGet(() -> {
+            if (!ProfileContext.DEFAULT_PROFILE.equals(ProfileContext.currentId())) return null;
+            String fallback = properties.getOpenaiApiKey();
+            return fallback == null || fallback.isBlank() ? null : fallback;
+        });
     }
 
     public String reply(Conversation conversation) throws IOException {
-        if (client == null) {
+        String key = apiKey();
+        if (key == null) {
             throw new IllegalStateException("OPENAI_API_KEY is not configured.");
         }
+        OpenAIClient client = OpenAIOkHttpClient.builder().apiKey(key).build();
 
         List<ResponseInputItem> inputs = new ArrayList<>();
         int start = Math.max(0, conversation.messages().size() - 30);

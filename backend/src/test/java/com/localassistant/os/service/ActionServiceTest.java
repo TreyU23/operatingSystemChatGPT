@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.localassistant.os.config.AssistantProperties;
+import com.localassistant.os.profile.ProfilePaths;
 import com.localassistant.os.store.StateStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,8 +25,7 @@ class ActionServiceTest {
         AssistantProperties properties = new AssistantProperties();
         properties.setDataDir(root.resolve("data").toString());
         properties.setWorkspaceRoot(root.toString());
-        StateStore store = new StateStore(properties);
-        store.initialize();
+        StateStore store = new StateStore(new ProfilePaths(properties));
         WorkspaceService workspace = new WorkspaceService(properties);
         memories = new MemoryService(store);
         actions = new ActionService(store, workspace, memories);

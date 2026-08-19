@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as FeatherIcons from "react-icons/fi";
+import { getPhoneDeviceVisual } from "./phoneDevice.js";
+import {
+  EMPTY_MUSIC_CONNECTION,
+  MUSIC_PROVIDERS,
+  migrateMusicIntegration,
+  normalizeMusicUrl,
+} from "./musicProviders.js";
+import { ACCENT_PRESETS, accentForegroundColor, accentSoftColor, effectiveAccentColor, normalizeHexColor, readAccentColor } from "./accentColors.js";
 
 const ICON_COMPONENTS = {
   Activity: "FiActivity", AppWindow: "FiSquare", BatteryCharging: "FiBatteryCharging",
@@ -15,7 +23,7 @@ const ICON_COMPONENTS = {
   Plus: "FiPlus", Power: "FiPower", Presentation: "FiPieChart", RefreshCw: "FiRefreshCw", RotateCw: "FiRotateCw", Search: "FiSearch",
   Send: "FiSend", Settings: "FiSettings", Sheet: "FiGrid", Shield: "FiShield", ShieldCheck: "FiShield",
   Shuffle: "FiShuffle", SkipBack: "FiSkipBack", SkipForward: "FiSkipForward", Smartphone: "FiSmartphone",
-  Sparkles: "FiZap", Sun: "FiSun", Trash2: "FiTrash2", UsersRound: "FiUsers", Volume2: "FiVolume2", VolumeX: "FiVolumeX",
+  Sparkles: "FiZap", Sun: "FiSun", Trash2: "FiTrash2", Upload: "FiUpload", User: "FiUser", UsersRound: "FiUsers", Volume2: "FiVolume2", VolumeX: "FiVolumeX",
   Wifi: "FiWifi", X: "FiX",
 };
 
@@ -82,8 +90,8 @@ const EMPTY_MUSIC_PLAYER = {
   ready: false,
   playing: false,
   title: "Nothing playing",
-  artist: "Apple Music",
-  album: "Start a track in Apple Music or the web player",
+  artist: "Music",
+  album: "Start a track in your selected music player",
   artwork: "/assets/album-cover.png",
   elapsed: 0,
   duration: 0,
@@ -91,6 +99,15 @@ const EMPTY_MUSIC_PLAYER = {
   muted: false,
   detail: "Start playback once, then Live Desktop can control it through Windows.",
 };
+
+function emptyMusicPlayerFor(providerId) {
+  const provider = MUSIC_PROVIDERS[providerId] || MUSIC_PROVIDERS.apple;
+  return {
+    ...EMPTY_MUSIC_PLAYER,
+    artist: provider.name,
+    album: `Start a track in ${provider.name} or its web player`,
+  };
+}
 
 const NAV_ITEMS = [
   { id: "home", label: "Home", icon: "House" },
@@ -100,32 +117,44 @@ const NAV_ITEMS = [
   { id: "conversations", label: "Conversations", icon: "MessagesSquare" },
 ];
 
+const PROFILES_KEY = "live-desktop.profiles";
+const ACTIVE_PROFILE_KEY = "live-desktop.active-profile";
 const MUSIC_CONNECTION_KEY = "live-desktop.apple-music";
 const THEME_KEY = "live-desktop.theme";
-const APPLE_MUSIC_STARTER = {
-  sourceUrl: "https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb",
-  embedUrl: "https://embed.music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb",
-};
-function normalizeAppleMusicUrl(value) {
-  const url = new URL(value.trim());
-  if (url.protocol !== "https:" || !["music.apple.com", "embed.music.apple.com"].includes(url.hostname)) {
-    throw new Error("Paste a valid Apple Music song, album, or playlist link.");
-  }
-  url.hostname = "embed.music.apple.com";
-  return url.toString();
+const ACCENT_COLOR_KEY = "live-desktop.accent-color";
+const DEFAULT_PROFILE = { id: "default", name: "Local user", avatar: "/assets/user-avatar.png" };
+
+function readProfiles() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(PROFILES_KEY));
+    if (Array.isArray(saved) && saved.length) return saved;
+  } catch { /* Use the local default profile. */ }
+  window.localStorage.setItem(PROFILES_KEY, JSON.stringify([DEFAULT_PROFILE]));
+  return [DEFAULT_PROFILE];
 }
 
+function activeProfileId() {
+  const profiles = readProfiles();
+  const saved = window.localStorage.getItem(ACTIVE_PROFILE_KEY);
+  return profiles.some((profile) => profile.id === saved) ? saved : profiles[0].id;
+}
+
+function profileStorageKey(base, profileId = activeProfileId()) {
+  return `${base}.${profileId}`;
+}
 function formatPlaybackTime(seconds) {
   const safe = Number.isFinite(Number(seconds)) ? Math.max(0, Number(seconds)) : 0;
   return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, "0")}`;
 }
 
-function readMusicConnection() {
+function readMusicIntegration(profileId = activeProfileId()) {
   try {
-    const saved = JSON.parse(window.localStorage.getItem(MUSIC_CONNECTION_KEY));
-    return saved?.embedUrl ? saved : APPLE_MUSIC_STARTER;
+    const scoped = window.localStorage.getItem(profileStorageKey(MUSIC_CONNECTION_KEY, profileId));
+    const legacy = profileId === "default" ? window.localStorage.getItem(MUSIC_CONNECTION_KEY) : null;
+    const saved = JSON.parse(scoped || legacy);
+    return migrateMusicIntegration(saved);
   } catch {
-    return APPLE_MUSIC_STARTER;
+    return migrateMusicIntegration(null);
   }
 }
 
@@ -136,7 +165,11 @@ const APP_ICON_ASSETS = {
 
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: options.body ? { "Content-Type": "application/json", ...options.headers } : options.headers,
+    headers: {
+      "X-Profile-Id": activeProfileId(),
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...options.headers,
+    },
     ...options,
   });
   const contentType = response.headers.get("content-type") || "";
@@ -398,7 +431,7 @@ function RecentApps({ apps }) {
   );
 }
 
-function CalendarAndMedia({ calendar, calendarRefreshing, musicPlayer, musicConfigured, onCalendarDateChange, onRefreshCalendar, onOpenCalendarSettings, onOpenMusic, onMusicAction }) {
+function CalendarAndMedia({ calendar, calendarRefreshing, musicProvider, musicPlayer, musicConfigured, onCalendarDateChange, onRefreshCalendar, onOpenCalendarSettings, onOpenMusic, onMusicAction }) {
   const [dayOffset, setDayOffset] = useState(0);
   const [dayOpen, setDayOpen] = useState(false);
   const calendarDate = localDateAtOffset(dayOffset);
@@ -436,11 +469,11 @@ function CalendarAndMedia({ calendar, calendarRefreshing, musicPlayer, musicConf
       {dayOpen ? <div className="calendar-inline"><strong>{dateLabel}</strong><span>{calendar.connected ? `${events.length} iCloud event${events.length === 1 ? "" : "s"} · Synced ${formatRelativeTime(calendar.capturedAt)}` : "Connect your account in Settings to sync events."}</span></div> : null}
       <div className="media-widget">
         <div className="media-label">
-          <span><img src="/assets/app-apple-music.svg" alt="" /> Apple Music {musicPlayer.ready ? "· live" : ""}</span>
+          <span><img src={musicProvider.icon} alt="" /> {musicProvider.name} {musicPlayer.ready ? "· live" : ""}</span>
           <button type="button" onClick={onOpenMusic}>{musicConfigured ? "Open player" : "Connect"}<Icon name="ChevronRight" size={13} /></button>
         </div>
         <div className="track">
-          <img src={musicPlayer.artwork} alt="Current Apple Music artwork" />
+          <img src={musicPlayer.artwork} alt={`Current ${musicProvider.name} artwork`} />
           <div><strong>{musicPlayer.title}</strong><span>{musicPlayer.artist}</span><small>{musicPlayer.album}</small></div>
         </div>
         <div className="progress" aria-label="Playback progress"><i style={{ width: `${musicPlayer.duration ? Math.min(100, (musicPlayer.elapsed / musicPlayer.duration) * 100) : 0}%` }} /></div>
@@ -473,6 +506,7 @@ function PhonePanel({ phone, onOpen, onRefresh, onCopy, busy, refreshing }) {
   const ready = phone?.installed;
   const connected = phone?.connected;
   const lastSync = formatRelativeTime(phone?.lastSyncedAt);
+  const phoneVisual = getPhoneDeviceVisual(phone);
   return (
     <aside className="phone-panel" aria-labelledby="phone-title">
       <div className="phone-title-row">
@@ -481,8 +515,14 @@ function PhonePanel({ phone, onOpen, onRefresh, onCopy, busy, refreshing }) {
           <Icon name="RefreshCw" size={19} className={refreshing ? "spin" : ""} />
         </button>
       </div>
-      <div className="phone-device">
-        <img src="/assets/phone-device.png" alt="Linked phone" />
+      <div className="phone-device" data-phone-platform={phoneVisual.platform}>
+        {phoneVisual.src ? (
+          <img src={phoneVisual.src} alt={phoneVisual.alt} />
+        ) : (
+          <span className="phone-device-placeholder" role="img" aria-label={phoneVisual.alt}>
+            <Icon name="Smartphone" size={46} />
+          </span>
+        )}
         <div>
           <h3>{ready ? phone.deviceName || "Linked phone" : "Connect your phone"}</h3>
           <span className={connected ? "connected" : "muted"}><i /> {phone?.detail || "Phone Link setup available"}</span>
@@ -674,20 +714,85 @@ function LifecycleNotice({ state }) {
   );
 }
 
-function SettingsView({ darkMode, onDarkModeChange, calendar, onConnectCalendar, onDisconnectCalendar, musicConnection, musicPlayer, onSaveMusic, onDisconnectMusic, onRefreshMusic, onOpenMusic }) {
+function ProfilePicker({ profiles, activeProfile, onProfilesChange, onSwitch, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(activeProfile.name);
+  const fileId = `profile-image-${activeProfile.id}`;
+
+  useEffect(() => setName(activeProfile.name), [activeProfile.id, activeProfile.name]);
+
+  const updateActive = (changes) => {
+    const next = profiles.map((profile) => profile.id === activeProfile.id ? { ...profile, ...changes } : profile);
+    onProfilesChange(next);
+  };
+
+  const uploadAvatar = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => updateActive({ avatar: reader.result });
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  };
+
+  const createProfile = () => {
+    const id = crypto.randomUUID().replaceAll("-", "_");
+    const next = { id, name: `Profile ${profiles.length + 1}`, avatar: "/assets/user-avatar.png" };
+    onProfilesChange([...profiles, next]);
+    onSwitch(id);
+  };
+
+  return (
+    <div className="profile-picker">
+      <button className="profile-trigger" type="button" aria-label={`Open profile picker for ${activeProfile.name}`} aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <img src={activeProfile.avatar} alt="" /><span><strong>{activeProfile.name}</strong><small>Local profile</small></span><Icon name="ChevronRight" size={14} />
+      </button>
+      {open ? (
+        <section className="profile-menu" aria-label="Local profiles">
+          <div className="profile-menu__heading"><div><strong>Profiles</strong><span>Everything stays on this PC</span></div><button type="button" onClick={() => setOpen(false)} aria-label="Close profiles"><Icon name="X" size={16} /></button></div>
+          <div className="profile-list">
+            {profiles.map((profile) => <button className={profile.id === activeProfile.id ? "active" : ""} type="button" key={profile.id} onClick={() => profile.id !== activeProfile.id && onSwitch(profile.id)}><img src={profile.avatar} alt="" /><span><strong>{profile.name}</strong><small>{profile.id === activeProfile.id ? "Current profile" : "Switch profile"}</small></span>{profile.id === activeProfile.id ? <Icon name="Check" size={16} /> : null}</button>)}
+          </div>
+          <div className="profile-editor">
+            <label htmlFor="profile-name">Profile name</label>
+            <div><input id="profile-name" value={name} maxLength={48} onChange={(event) => setName(event.target.value)} onBlur={() => name.trim() && updateActive({ name: name.trim() })} /><label className="avatar-upload" htmlFor={fileId}><Icon name="Upload" size={15} /> Change photo</label><input className="visually-hidden" id={fileId} type="file" accept="image/*" onChange={uploadAvatar} /></div>
+          </div>
+          <div className="profile-menu__actions"><button className="secondary-button" type="button" onClick={createProfile}><Icon name="Plus" size={15} /> New profile</button><button className="text-action text-action--danger" type="button" disabled={activeProfile.id === "default" || profiles.length === 1} onClick={() => onDelete(activeProfile.id)}><Icon name="Trash2" size={14} /> Delete</button></div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function SettingsView({ darkMode, onDarkModeChange, accentColor, onAccentColorChange, onCustomAccentColorChange, calendar, onConnectCalendar, onDisconnectCalendar, musicProviderId, musicConnection, musicPlayer, onMusicProviderChange, onSaveMusic, onDisconnectMusic, onRefreshMusic, onOpenMusic, openAiSettings, onSaveOpenAiKey, onDeleteOpenAiKey }) {
+  const musicProvider = MUSIC_PROVIDERS[musicProviderId];
   const [musicUrl, setMusicUrl] = useState(musicConnection.sourceUrl || "");
   const [error, setError] = useState("");
   const [calendarEmail, setCalendarEmail] = useState(calendar.email || "");
   const [calendarPassword, setCalendarPassword] = useState("");
   const [calendarError, setCalendarError] = useState("");
   const [calendarBusy, setCalendarBusy] = useState(false);
+  const [openAiKey, setOpenAiKey] = useState("");
+  const [openAiBusy, setOpenAiBusy] = useState(false);
+  const [openAiError, setOpenAiError] = useState("");
+  const [customAccent, setCustomAccent] = useState(accentColor);
+  const [accentError, setAccentError] = useState("");
 
-  useEffect(() => setMusicUrl(musicConnection.sourceUrl || ""), [musicConnection.sourceUrl]);
+  useEffect(() => {
+    setMusicUrl(musicConnection.sourceUrl || "");
+    setError("");
+  }, [musicConnection.sourceUrl, musicProviderId]);
+
+  useEffect(() => {
+    setCustomAccent(accentColor);
+    setAccentError("");
+  }, [accentColor]);
 
   const saveMusic = (event) => {
     event.preventDefault();
     try {
-      const embedUrl = normalizeAppleMusicUrl(musicUrl);
+      const embedUrl = normalizeMusicUrl(musicProviderId, musicUrl);
       onSaveMusic({ sourceUrl: musicUrl.trim(), embedUrl });
       setError("");
     } catch (urlError) {
@@ -713,11 +818,36 @@ function SettingsView({ darkMode, onDarkModeChange, calendar, onConnectCalendar,
     <main className="view-shell settings-view">
       <header><span>Preferences</span><h1>Settings</h1><p>Connect services and choose how Live Desktop looks. Preferences and credentials stay local to this PC.</p></header>
       <div className="settings-grid">
-        <section className="settings-card" aria-labelledby="appearance-title">
+        <section className="settings-card settings-card--credentials" aria-labelledby="openai-key-title">
+          <div className="settings-card__icon"><Icon name="Bot" size={20} /></div>
+          <div className="settings-card__content">
+            <div className="settings-title-row"><div><h2 id="openai-key-title">OpenAI API key</h2><p>This key belongs only to the current local profile and is protected with Windows data protection.</p></div><span className={`connection-pill ${openAiSettings.openAiConfigured ? "connection-pill--on" : ""}`}>{openAiSettings.openAiConfigured ? "Connected" : "Not connected"}</span></div>
+            <form className="profile-key-form" onSubmit={async (event) => { event.preventDefault(); setOpenAiBusy(true); setOpenAiError(""); try { await onSaveOpenAiKey(openAiKey); setOpenAiKey(""); } catch (keyError) { setOpenAiError(keyError.message); } finally { setOpenAiBusy(false); } }}>
+              <label htmlFor="openai-api-key">API key</label><div><input id="openai-api-key" type="password" value={openAiKey} onChange={(event) => setOpenAiKey(event.target.value)} autoComplete="off" placeholder={openAiSettings.profileApiKey ? "Profile key saved" : "sk-..."} required /><button className="primary-button" type="submit" disabled={openAiBusy}>{openAiBusy ? "Saving…" : openAiSettings.profileApiKey ? "Replace key" : "Save key"}</button>{openAiSettings.profileApiKey ? <button className="secondary-button" type="button" onClick={onDeleteOpenAiKey}>Remove</button> : null}</div>
+              <small>The key is never returned to the browser after saving.</small>{openAiError ? <p className="form-error" role="alert">{openAiError}</p> : null}
+            </form>
+          </div>
+        </section>
+        <section className="settings-card settings-card--appearance" aria-labelledby="appearance-title">
           <div className="settings-card__icon"><Icon name={darkMode ? "Moon" : "Sun"} size={20} /></div>
           <div className="settings-card__content">
             <h2 id="appearance-title">Appearance</h2>
             <p>Dark mode uses the completely black background selected for this dashboard.</p>
+            <fieldset className="accent-settings">
+              <legend>Accent color</legend>
+              <div className="accent-presets">
+                {ACCENT_PRESETS.map((preset) => (
+                  <button className={accentColor === preset.color ? "active" : ""} data-color={preset.id} key={preset.id} type="button" aria-label={`Use ${preset.label} accent`} aria-pressed={accentColor === preset.color} onClick={() => onAccentColorChange(preset.color)}>
+                    <span style={{ backgroundColor: effectiveAccentColor(preset.color, darkMode) }} />{preset.label}{accentColor === preset.color ? <Icon name="Check" size={14} /> : null}
+                  </button>
+                ))}
+              </div>
+              <form className="custom-accent-form" onSubmit={(event) => { event.preventDefault(); try { const normalized = onCustomAccentColorChange(customAccent); setCustomAccent(normalized); setAccentError(""); } catch (colorError) { setAccentError(colorError.message); } }}>
+                <label htmlFor="custom-accent-color">Custom hex color</label>
+                <div><span className="custom-accent-preview" style={{ backgroundColor: effectiveAccentColor(/^#[0-9a-f]{6}$/i.test(customAccent) ? customAccent : accentColor, darkMode) }} /><input id="custom-accent-color" value={customAccent} onChange={(event) => { setCustomAccent(event.target.value); setAccentError(""); }} placeholder="#1685FF" spellCheck="false" autoComplete="off" /><button className="secondary-button" type="submit">Apply</button></div>
+                {accentError ? <p className="form-error" role="alert">{accentError}</p> : <small>Enter a 3- or 6-digit hex code.</small>}
+              </form>
+            </fieldset>
           </div>
           <button className={`toggle settings-toggle ${darkMode ? "toggle--on" : ""}`} type="button" role="switch" aria-checked={darkMode} aria-label="Dark mode" onClick={() => onDarkModeChange(!darkMode)}><span className="toggle__thumb" /></button>
         </section>
@@ -743,25 +873,33 @@ function SettingsView({ darkMode, onDarkModeChange, calendar, onConnectCalendar,
         </section>
 
         <section className="settings-card settings-card--music" aria-labelledby="music-account-title">
-          <div className="settings-card__icon settings-card__icon--music"><img src="/assets/app-apple-music.svg" alt="" /></div>
+          <div className={`settings-card__icon settings-card__icon--music settings-card__icon--${musicProviderId}`}><img src={musicProvider.icon} alt="" /></div>
           <div className="settings-card__content">
-            <div className="settings-title-row"><div><h2 id="music-account-title">Apple Music</h2><p>Uses the free Apple web player and Windows’ built-in media controls. No developer account or API key.</p></div><span className="connection-pill connection-pill--on">No extra fee</span></div>
+            <div className="settings-title-row"><div><h2 id="music-account-title">Music service</h2><p>Choose which web player powers the existing dashboard widget and full Music view.</p></div><span className="connection-pill connection-pill--on">No extra fee</span></div>
+
+            <div className="music-provider-picker" role="radiogroup" aria-label="Music service">
+              {Object.values(MUSIC_PROVIDERS).map((provider) => (
+                <button key={provider.id} className={provider.id === musicProviderId ? "active" : ""} type="button" role="radio" aria-checked={provider.id === musicProviderId} onClick={() => onMusicProviderChange(provider.id)}>
+                  <img src={provider.icon} alt="" /><span><strong>{provider.name}</strong><small>{provider.id === musicProviderId ? "Used by widgets" : "Switch service"}</small></span>{provider.id === musicProviderId ? <Icon name="Check" size={16} /> : null}
+                </button>
+              ))}
+            </div>
 
             <div className="music-auth-row">
               <div><strong>Local Windows media session</strong><span>{musicPlayer.available ? `${musicPlayer.title} · ${musicPlayer.detail}` : musicPlayer.detail}</span></div>
               <button type="button" className="secondary-button" onClick={onRefreshMusic}><Icon name="RefreshCw" size={15} /> Refresh status</button>
             </div>
 
-            <div className="free-integration-note"><Icon name="CircleCheck" size={18} /><div><strong>No paid developer membership required</strong><span>Sign in only inside Apple’s player. Live Desktop reads the active song and sends playback commands locally through Windows.</span></div></div>
+            <div className="free-integration-note"><Icon name="CircleCheck" size={18} /><div><strong>No developer credentials required</strong><span>Sign in only inside {musicProvider.name}’s player. Live Desktop reads the active song and sends playback commands locally through Windows.</span></div></div>
 
             <form className="music-link-form" onSubmit={saveMusic}>
-              <label htmlFor="apple-music-url">Playlist, album, or song link</label>
-              <div><input id="apple-music-url" type="url" value={musicUrl} onChange={(event) => setMusicUrl(event.target.value)} placeholder="https://music.apple.com/us/playlist/..." required /><button className="primary-button" type="submit">Connect link</button></div>
-              <small>In Apple Music, choose Share, copy the link, and paste it here. Open the full player and start a track once; the dashboard controls will then follow that Windows media session.</small>
+              <label htmlFor="music-service-url">{musicProvider.linkLabel}</label>
+              <div><input id="music-service-url" type="url" value={musicUrl} onChange={(event) => setMusicUrl(event.target.value)} placeholder={musicProvider.placeholder} required /><button className="primary-button" type="submit">Connect link</button></div>
+              <small>In {musicProvider.name}, choose Share, copy the link, and paste it here. Open the full player and start a track once; the dashboard controls will then follow that Windows media session.</small>
               {error ? <p className="form-error" role="alert">{error}</p> : null}
             </form>
 
-            <div className="connected-actions"><button className="primary-button" type="button" onClick={onOpenMusic}><Icon name="Music2" size={16} /> Open full player</button><a className="secondary-button" href="https://music.apple.com/" target="_blank" rel="noreferrer"><Icon name="ExternalLink" size={15} /> Open Apple Music externally</a>{musicConnection.embedUrl ? <button className="text-action text-action--danger" type="button" onClick={onDisconnectMusic}>Disconnect playlist</button> : null}</div>
+            <div className="connected-actions"><button className="primary-button" type="button" onClick={onOpenMusic}><Icon name="Music2" size={16} /> Open full player</button><a className="secondary-button" href={musicProvider.externalUrl} target="_blank" rel="noreferrer"><Icon name="ExternalLink" size={15} /> Open {musicProvider.name} externally</a>{musicConnection.embedUrl ? <button className="text-action text-action--danger" type="button" onClick={onDisconnectMusic}>Disconnect {musicProvider.contentLabel}</button> : null}</div>
           </div>
         </section>
       </div>
@@ -769,17 +907,17 @@ function SettingsView({ darkMode, onDarkModeChange, calendar, onConnectCalendar,
   );
 }
 
-function MusicView({ musicConnection, musicPlayer, onMusicAction, onOpenSettings }) {
+function MusicView({ musicProvider, musicConnection, musicPlayer, onMusicAction, onOpenSettings }) {
   return (
     <main className="music-view">
       <header>
-        <div><span>Apple Music</span><h1>Your music</h1><p>Apple’s web player for browsing, with the original Live Desktop controls connected locally through Windows.</p></div>
+        <div><span>{musicProvider.name}</span><h1>Your music</h1><p>{musicProvider.playerDescription}</p></div>
         <button className="secondary-button" type="button" onClick={onOpenSettings}><Icon name="Settings" size={16} /> Music settings</button>
       </header>
       <section className="music-stage">
-        <div className="music-stage__art"><img src={musicPlayer.artwork} alt="Current Apple Music artwork" /></div>
+        <div className="music-stage__art"><img src={musicPlayer.artwork} alt={`Current ${musicProvider.name} artwork`} /></div>
         <div className="music-stage__player">
-          <div className="music-stage__source"><img src="/assets/app-apple-music.svg" alt="" /><span>{musicPlayer.available ? "Windows media session connected" : "Start a track in the player below"}</span></div>
+          <div className="music-stage__source"><img src={musicProvider.icon} alt="" /><span>{musicPlayer.available ? "Windows media session connected" : "Start a track in the player below"}</span></div>
           <h2>{musicPlayer.title}</h2><p>{musicPlayer.artist}</p><small>{musicPlayer.album}</small>
           <div className="progress music-stage__progress"><i style={{ width: `${musicPlayer.duration ? Math.min(100, (musicPlayer.elapsed / musicPlayer.duration) * 100) : 0}%` }} /></div>
           <div className="track-time"><span>{formatPlaybackTime(musicPlayer.elapsed)}</span><span>{formatPlaybackTime(musicPlayer.duration)}</span></div>
@@ -790,7 +928,7 @@ function MusicView({ musicConnection, musicPlayer, onMusicAction, onOpenSettings
             <button type="button" aria-label="Next track" onClick={() => onMusicAction("next")}><Icon name="SkipForward" size={26} /></button>
             <button className={musicPlayer.muted ? "active" : ""} type="button" aria-label="Toggle mute" onClick={() => onMusicAction("mute")}><Icon name={musicPlayer.muted ? "VolumeX" : "Volume2"} size={21} /></button>
           </div>
-          <div className="music-stage__queue"><Icon name="Music2" size={17} /><span>{musicConnection.sourceUrl ? "Use the Apple player below to choose a track. Controls stay active across Live Desktop tabs." : "Choose a playlist, album, or song in Settings."}</span></div>
+          <div className="music-stage__queue"><Icon name="Music2" size={17} /><span>{musicConnection.sourceUrl ? `Use the ${musicProvider.shortName} player below to choose a track. Controls stay active across Live Desktop tabs.` : `Choose a ${musicProvider.contentLabel} in Settings.`}</span></div>
         </div>
       </section>
     </main>
@@ -798,6 +936,8 @@ function MusicView({ musicConnection, musicPlayer, onMusicAction, onOpenSettings
 }
 
 export function App() {
+  const [profiles, setProfiles] = useState(readProfiles);
+  const [profileId] = useState(activeProfileId);
   const [activeView, setActiveView] = useState("home");
   const [system, setSystem] = useState(FALLBACK_SYSTEM);
   const [apps, setApps] = useState([]);
@@ -816,18 +956,58 @@ export function App() {
   const [lifecycleState, setLifecycleState] = useState("idle");
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [toast, setToast] = useState(null);
-  const [darkMode, setDarkMode] = useState(() => window.localStorage.getItem(THEME_KEY) !== "light");
-  const [musicConnection, setMusicConnection] = useState(readMusicConnection);
-  const [musicPlayer, setMusicPlayer] = useState(EMPTY_MUSIC_PLAYER);
+  const [darkMode, setDarkMode] = useState(() => (window.localStorage.getItem(profileStorageKey(THEME_KEY, profileId)) || (profileId === "default" ? window.localStorage.getItem(THEME_KEY) : null)) !== "light");
+  const [accentColor, setAccentColor] = useState(() => readAccentColor(window.localStorage, profileStorageKey(ACCENT_COLOR_KEY, profileId)));
+  const [musicIntegration, setMusicIntegration] = useState(() => readMusicIntegration(profileId));
+  const musicProviderId = musicIntegration.provider;
+  const musicProvider = MUSIC_PROVIDERS[musicProviderId];
+  const musicConnection = musicIntegration.connections[musicProviderId];
+  const [musicPlayer, setMusicPlayer] = useState(() => emptyMusicPlayerFor(musicProviderId));
+  const [openAiSettings, setOpenAiSettings] = useState({ openAiConfigured: false, profileApiKey: false });
+  const activeProfile = profiles.find((profile) => profile.id === profileId) || profiles[0];
 
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? "dark" : "light";
-    window.localStorage.setItem(THEME_KEY, darkMode ? "dark" : "light");
-  }, [darkMode]);
+    window.localStorage.setItem(profileStorageKey(THEME_KEY, profileId), darkMode ? "dark" : "light");
+  }, [darkMode, profileId]);
 
   useEffect(() => {
-    window.localStorage.setItem(MUSIC_CONNECTION_KEY, JSON.stringify(musicConnection));
-  }, [musicConnection]);
+    const appliedAccent = effectiveAccentColor(accentColor, darkMode);
+    document.documentElement.style.setProperty("--accent", appliedAccent);
+    document.documentElement.style.setProperty("--accent-soft", accentSoftColor(appliedAccent));
+    document.documentElement.style.setProperty("--accent-foreground", accentForegroundColor(appliedAccent));
+    window.localStorage.setItem(profileStorageKey(ACCENT_COLOR_KEY, profileId), accentColor);
+  }, [accentColor, darkMode, profileId]);
+
+  const setCustomAccentColor = (hexCode) => {
+    const normalized = normalizeHexColor(hexCode);
+    setAccentColor(normalized);
+    return normalized;
+  };
+
+  useEffect(() => {
+    window.localStorage.setItem(profileStorageKey(MUSIC_CONNECTION_KEY, profileId), JSON.stringify(musicIntegration));
+  }, [musicIntegration, profileId]);
+
+  const updateProfiles = (nextProfiles) => {
+    setProfiles(nextProfiles);
+    window.localStorage.setItem(PROFILES_KEY, JSON.stringify(nextProfiles));
+  };
+
+  const switchProfile = (nextId) => {
+    window.localStorage.setItem(ACTIVE_PROFILE_KEY, nextId);
+    window.location.reload();
+  };
+
+  const deleteProfile = async (id) => {
+    if (id === "default" || profiles.length === 1) return;
+    try {
+      await api("/api/profile/data", { method: "DELETE" });
+      const next = profiles.filter((profile) => profile.id !== id);
+      updateProfiles(next);
+      switchProfile(next[0].id);
+    } catch (error) { notify(error.message, "error"); }
+  };
 
   const notify = useCallback((message, tone = "neutral") => {
     setToast({ message, tone });
@@ -846,6 +1026,7 @@ export function App() {
       api("/api/conversations"),
       api("/api/runtime"),
       api(`/api/integrations/icloud-calendar?date=${localIsoDate(localDateAtOffset())}`),
+      api("/api/profile/settings"),
     ]);
     if (results[0].status === "fulfilled") setHealth({ connected: true, configured: Boolean(results[0].value.openAiConfigured) });
     else setHealth({ connected: false, configured: false });
@@ -857,11 +1038,12 @@ export function App() {
     if (results[6].status === "fulfilled") setConversations(results[6].value);
     if (results[7].status === "fulfilled") setRuntime(results[7].value);
     if (results[8].status === "fulfilled") setCalendar(results[8].value);
+    if (results[9].status === "fulfilled") setOpenAiSettings(results[9].value);
   }, []);
 
   const refreshMusicPlayer = useCallback(async (announce = false) => {
     try {
-      const latest = await api("/api/integrations/media-session");
+      const latest = await api(`/api/integrations/media-session?provider=${musicProviderId}`);
       setMusicPlayer((current) => ({ ...current, ...latest }));
       if (announce) notify(latest.available ? "Windows media session refreshed." : latest.detail, latest.available ? "success" : "neutral");
       return latest;
@@ -869,7 +1051,7 @@ export function App() {
       if (announce) notify(error.message, "error");
       return null;
     }
-  }, [notify]);
+  }, [musicProviderId, notify]);
 
   const refreshPhone = useCallback(async (announce = false) => {
     setPhoneRefreshing(true);
@@ -1046,14 +1228,14 @@ export function App() {
     }
   };
 
-  const controlAppleMusic = async (action) => {
+  const controlMusic = async (action) => {
     try {
       if (!musicPlayer.available) {
         setActiveView("music");
-        notify("Start a track in the Apple player once, then these controls will follow it through Windows.", "neutral");
+        notify(`Start a track in the ${musicProvider.shortName} player once, then these controls will follow it through Windows.`, "neutral");
         return;
       }
-      const updated = await api(`/api/integrations/media-session/${action}`, { method: "POST" });
+      const updated = await api(`/api/integrations/media-session/${action}?provider=${musicProviderId}`, { method: "POST" });
       setMusicPlayer((current) => ({ ...current, ...updated, muted: action === "mute" ? !current.muted : current.muted }));
       if (updated.actionSucceeded === false) notify("That media session did not accept the command.", "error");
     } catch (error) {
@@ -1062,13 +1244,40 @@ export function App() {
   };
 
   const saveMusicConnection = (connection) => {
-    setMusicConnection(connection);
-    notify("Apple Music link connected.", "success");
+    setMusicIntegration((current) => ({
+      ...current,
+      connections: { ...current.connections, [current.provider]: connection },
+    }));
+    notify(`${musicProvider.name} link connected.`, "success");
   };
 
   const disconnectMusic = () => {
-    setMusicConnection({ sourceUrl: "", embedUrl: "" });
-    notify("Apple Music playlist disconnected.", "success");
+    setMusicIntegration((current) => ({
+      ...current,
+      connections: { ...current.connections, [current.provider]: { ...EMPTY_MUSIC_CONNECTION } },
+    }));
+    notify(`${musicProvider.name} link disconnected.`, "success");
+  };
+
+  const switchMusicProvider = (providerId) => {
+    if (providerId === musicProviderId || !MUSIC_PROVIDERS[providerId]) return;
+    setMusicIntegration((current) => ({ ...current, provider: providerId }));
+    setMusicPlayer(emptyMusicPlayerFor(providerId));
+    notify(`${MUSIC_PROVIDERS[providerId].name} now powers the Music widgets.`, "success");
+  };
+
+  const saveOpenAiKey = async (apiKey) => {
+    const saved = await api("/api/profile/openai-key", { method: "POST", body: JSON.stringify({ apiKey }) });
+    setOpenAiSettings(saved);
+    setHealth((current) => ({ ...current, configured: true }));
+    notify("OpenAI API key saved for this profile.", "success");
+  };
+
+  const deleteOpenAiKey = async () => {
+    const saved = await api("/api/profile/openai-key", { method: "DELETE" });
+    setOpenAiSettings(saved);
+    setHealth((current) => ({ ...current, configured: saved.openAiConfigured }));
+    notify("This profile’s OpenAI API key was removed.", "success");
   };
 
   return (
@@ -1088,8 +1297,8 @@ export function App() {
               <Icon name="Power" size={18} />
             </button>
           </div>
-          <button type="button" className={`settings-button ${activeView === "settings" ? "active" : ""}`} onClick={() => setActiveView("settings")}><Icon name="Settings" size={20} /><span>Settings</span></button>
-          <img src="/assets/user-avatar.png" alt="Local user profile" />
+          <button type="button" className={`settings-button ${activeView === "settings" ? "active" : ""}`} aria-label="Settings" onClick={() => setActiveView("settings")}><Icon name="Settings" size={20} /><span>Settings</span></button>
+          <ProfilePicker profiles={profiles} activeProfile={activeProfile} onProfilesChange={updateProfiles} onSwitch={switchProfile} onDelete={deleteProfile} />
         </div>
       </header>
 
@@ -1112,7 +1321,7 @@ export function App() {
               <div className="today-columns">
                 <SystemHealth system={system} connected={health.connected} configured={health.configured} />
                 <RecentApps apps={apps} />
-                <CalendarAndMedia calendar={calendar} calendarRefreshing={calendarRefreshing} musicPlayer={musicPlayer} musicConfigured={Boolean(musicConnection.embedUrl)} onCalendarDateChange={(date) => refreshCalendar(date, false)} onRefreshCalendar={(date) => refreshCalendar(date, true)} onOpenCalendarSettings={() => setActiveView("settings")} onOpenMusic={() => setActiveView("music")} onMusicAction={controlAppleMusic} />
+                <CalendarAndMedia calendar={calendar} calendarRefreshing={calendarRefreshing} musicProvider={musicProvider} musicPlayer={musicPlayer} musicConfigured={Boolean(musicConnection.embedUrl)} onCalendarDateChange={(date) => refreshCalendar(date, false)} onRefreshCalendar={(date) => refreshCalendar(date, true)} onOpenCalendarSettings={() => setActiveView("settings")} onOpenMusic={() => setActiveView("music")} onMusicAction={controlMusic} />
               </div>
             </section>
             <PhonePanel
@@ -1131,9 +1340,9 @@ export function App() {
       {activeView === "approvals" ? <ApprovalsView actions={actions} loading={false} onApprove={(id) => updateAction(id, "approve")} onReject={(id) => updateAction(id, "reject")} /> : null}
       {activeView === "memories" ? <MemoriesView memories={memories} onCreate={createMemory} onDelete={deleteMemory} /> : null}
       {activeView === "conversations" ? <ConversationsView conversations={conversations} selected={selectedConversation} onSelect={selectConversation} onSend={sendMessage} busy={assistantBusy} /> : null}
-      {activeView === "music" ? <MusicView musicConnection={musicConnection} musicPlayer={musicPlayer} onMusicAction={controlAppleMusic} onOpenSettings={() => setActiveView("settings")} /> : null}
-      {musicConnection.embedUrl ? <div className={`music-web-player ${activeView === "music" ? "" : "music-web-player--parked"}`} aria-hidden={activeView !== "music"}><iframe title="Apple Music web player" src={musicConnection.embedUrl} allow="autoplay *; encrypted-media *; fullscreen *; clipboard-write" loading="eager" /></div> : null}
-      {activeView === "settings" ? <SettingsView darkMode={darkMode} onDarkModeChange={setDarkMode} calendar={calendar} onConnectCalendar={connectICloudCalendar} onDisconnectCalendar={disconnectICloudCalendar} musicConnection={musicConnection} musicPlayer={musicPlayer} onSaveMusic={saveMusicConnection} onDisconnectMusic={disconnectMusic} onRefreshMusic={() => refreshMusicPlayer(true)} onOpenMusic={() => setActiveView("music")} /> : null}
+      {activeView === "music" ? <MusicView musicProvider={musicProvider} musicConnection={musicConnection} musicPlayer={musicPlayer} onMusicAction={controlMusic} onOpenSettings={() => setActiveView("settings")} /> : null}
+      {musicConnection.embedUrl ? <div className={`music-web-player music-web-player--${musicProviderId} ${activeView === "music" ? "" : "music-web-player--parked"}`} aria-hidden={activeView !== "music"}><iframe key={`${musicProviderId}:${musicConnection.embedUrl}`} title={`${musicProvider.name} web player`} src={musicConnection.embedUrl} allow={musicProviderId === "apple" ? "autoplay *; encrypted-media *; fullscreen *; clipboard-write" : "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"} loading="eager" /></div> : null}
+      {activeView === "settings" ? <SettingsView darkMode={darkMode} onDarkModeChange={setDarkMode} accentColor={accentColor} onAccentColorChange={setAccentColor} onCustomAccentColorChange={setCustomAccentColor} calendar={calendar} onConnectCalendar={connectICloudCalendar} onDisconnectCalendar={disconnectICloudCalendar} musicProviderId={musicProviderId} musicConnection={musicConnection} musicPlayer={musicPlayer} onMusicProviderChange={switchMusicProvider} onSaveMusic={saveMusicConnection} onDisconnectMusic={disconnectMusic} onRefreshMusic={() => refreshMusicPlayer(true)} onOpenMusic={() => setActiveView("music")} openAiSettings={openAiSettings} onSaveOpenAiKey={saveOpenAiKey} onDeleteOpenAiKey={deleteOpenAiKey} /> : null}
 
       {shutdownOpen ? <ShutdownDialog onCancel={() => setShutdownOpen(false)} onConfirm={() => runLifecycle("shutdown")} /> : null}
       <LifecycleNotice state={lifecycleState} />

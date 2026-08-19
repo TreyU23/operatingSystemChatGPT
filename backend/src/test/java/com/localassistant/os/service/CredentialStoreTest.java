@@ -3,6 +3,7 @@ package com.localassistant.os.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.localassistant.os.config.AssistantProperties;
+import com.localassistant.os.profile.ProfilePaths;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
@@ -16,7 +17,7 @@ class CredentialStoreTest {
 
     @Test
     void protectsAndRestoresICloudPasswordWithWindowsDpapi() throws Exception {
-        ICloudCredentialStore store = new ICloudCredentialStore(properties());
+        ICloudCredentialStore store = new ICloudCredentialStore(new ProfilePaths(properties()));
 
         store.save("person@icloud.com", "abcd-efgh-ijkl-mnop");
 

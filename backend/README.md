@@ -1,6 +1,6 @@
 # Live Desktop backend
 
-The backend is a Java 21/Spring Boot 4.1 service that runs on `127.0.0.1:4317`. It owns OpenAI requests, relevance-filtered dashboard context, local conversations and memories, approval-backed Windows actions, system and Phone Link inspection, project lifecycle controls, iCloud CalDAV, and free local Windows media-session controls.
+The backend is a Java 21/Spring Boot 4.1 service that runs on `127.0.0.1:4317`. It owns profile-isolated OpenAI credentials, conversations, memories, approvals, iCloud CalDAV accounts, relevance-filtered dashboard context, Windows and Phone Link inspection, project lifecycle controls, and free local Windows media-session controls with Apple Music or Spotify session preference.
 
 Use the complete setup, integration, security, API, test, and troubleshooting instructions in the [project README](../README.md).
 
@@ -23,4 +23,4 @@ Health check:
 Invoke-RestMethod http://127.0.0.1:4317/health
 ```
 
-Backend state is stored under `data\`. iCloud and Apple Music secret values are encrypted with Windows DPAPI for the current user before they are written. Never commit `.env` or the contents of `data\`.
+Backend state is stored under `data\`. The original profile keeps backward-compatible files directly under `data\`; additional profiles use `data\profiles\<profile-id>\`. iCloud passwords and profile OpenAI API keys are encrypted with Windows DPAPI for the current Windows user before they are written. The `X-Profile-Id` request header selects the profile, and a missing header selects `default`. Never commit `.env` or the contents of `data\`.

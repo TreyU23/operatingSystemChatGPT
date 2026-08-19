@@ -1,6 +1,8 @@
 param(
     [ValidateSet("snapshot", "play", "pause", "next", "previous", "shuffle", "mute")]
-    [string]$Action = "snapshot"
+    [string]$Action = "snapshot",
+    [ValidateSet("music", "apple", "spotify")]
+    [string]$Provider = "music"
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,9 +35,13 @@ try {
         ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
     $sessions = @($manager.GetSessions())
     $current = $manager.GetCurrentSession()
+    $providerName = if ($Provider -eq "apple") { "Apple Music" } elseif ($Provider -eq "spotify") { "Spotify" } else { "Music" }
+    $providerPattern = if ($Provider -eq "apple") { "AppleMusic|AppleInc" } elseif ($Provider -eq "spotify") { "Spotify" } else { $null }
+    $matching = if ($providerPattern) { $sessions | Where-Object { $_.SourceAppUserModelId -match $providerPattern } | Select-Object -First 1 } else { $null }
+    $matchingPlaying = if ($providerPattern) { $sessions | Where-Object { $_.SourceAppUserModelId -match $providerPattern -and $_.GetPlaybackInfo().PlaybackStatus.ToString() -eq "Playing" } | Select-Object -First 1 } else { $null }
     $playing = $sessions | Where-Object { $_.GetPlaybackInfo().PlaybackStatus.ToString() -eq "Playing" } | Select-Object -First 1
     $apple = $sessions | Where-Object { $_.SourceAppUserModelId -match "AppleMusic|AppleInc" } | Select-Object -First 1
-    $session = if ($playing) { $playing } elseif ($apple) { $apple } elseif ($current) { $current } else { $sessions | Select-Object -First 1 }
+    $session = if ($matchingPlaying) { $matchingPlaying } elseif ($playing) { $playing } elseif ($matching) { $matching } elseif ($Provider -eq "music" -and $apple) { $apple } elseif ($current) { $current } else { $sessions | Select-Object -First 1 }
 
     if ($null -eq $session) {
         Write-Result ([pscustomobject]@{
@@ -43,8 +49,8 @@ try {
             ready = $false
             playing = $false
             title = "Nothing playing"
-            artist = "Apple Music"
-            album = "Start a track in Apple Music or the web player"
+            artist = $providerName
+            album = "Start a track in $providerName or the web player"
             artwork = "/assets/album-cover.png"
             elapsed = 0
             duration = 0
@@ -121,7 +127,7 @@ namespace LiveDesktop {
         status = $status
         title = if ([string]::IsNullOrWhiteSpace($properties.Title)) { "Untitled track" } else { $properties.Title }
         artist = if ([string]::IsNullOrWhiteSpace($properties.Artist)) { "Unknown artist" } else { $properties.Artist }
-        album = if ([string]::IsNullOrWhiteSpace($properties.AlbumTitle)) { "Apple Music" } else { $properties.AlbumTitle }
+        album = if ([string]::IsNullOrWhiteSpace($properties.AlbumTitle)) { $providerName } else { $properties.AlbumTitle }
         artwork = $artwork
         elapsed = [math]::Max(0, $timeline.Position.TotalSeconds)
         duration = [math]::Max(0, $timeline.EndTime.TotalSeconds)
@@ -135,8 +141,8 @@ namespace LiveDesktop {
         ready = $false
         playing = $false
         title = "Nothing playing"
-        artist = "Apple Music"
-        album = "Start a track in Apple Music or the web player"
+        artist = if ($Provider -eq "apple") { "Apple Music" } elseif ($Provider -eq "spotify") { "Spotify" } else { "Music" }
+        album = "Start a track in your selected music player"
         artwork = "/assets/album-cover.png"
         elapsed = 0
         duration = 0

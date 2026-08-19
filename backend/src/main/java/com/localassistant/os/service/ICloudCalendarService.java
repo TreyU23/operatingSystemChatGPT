@@ -21,6 +21,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.HashMap;
+import java.util.Map;
+import com.localassistant.os.profile.ProfileContext;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import net.fortuna.ical4j.data.CalendarBuilder;
@@ -45,7 +48,7 @@ public class ICloudCalendarService {
             .connectTimeout(Duration.ofSeconds(15))
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
-    private CalendarSnapshot cached;
+    private final Map<String, CalendarSnapshot> cache = new HashMap<>();
 
     public ICloudCalendarService(ICloudCredentialStore credentials) {
         this.credentials = credentials;
@@ -54,6 +57,7 @@ public class ICloudCalendarService {
     public synchronized CalendarSnapshot snapshot(LocalDate date, boolean forceRefresh) {
         Optional<ICloudCredentialStore.Credentials> saved = credentials.load();
         if (saved.isEmpty()) return CalendarSnapshot.disconnected(date);
+        CalendarSnapshot cached = cache.get(ProfileContext.currentId());
         if (!forceRefresh && cached != null && cached.date().equals(date)
                 && cached.capturedAt().isAfter(Instant.now().minus(CACHE_TTL))) {
             return cached;
@@ -65,6 +69,7 @@ public class ICloudCalendarService {
             cached = new CalendarSnapshot(true, saved.get().email(), "error", friendlyError(error),
                     date, previous, Instant.now());
         }
+        cache.put(ProfileContext.currentId(), cached);
         return cached;
     }
 
@@ -76,11 +81,11 @@ public class ICloudCalendarService {
             throw new IllegalArgumentException("Enter a valid Apple app-specific password.");
         }
         credentials.save(email.trim(), appSpecificPassword.trim());
-        cached = null;
+        cache.remove(ProfileContext.currentId());
         CalendarSnapshot result = snapshot(LocalDate.now(), true);
         if (!"connected".equals(result.status())) {
             credentials.clear();
-            cached = null;
+            cache.remove(ProfileContext.currentId());
             throw new IllegalArgumentException(result.detail());
         }
         return result;
@@ -88,9 +93,11 @@ public class ICloudCalendarService {
 
     public synchronized CalendarSnapshot disconnect() throws Exception {
         credentials.clear();
-        cached = null;
+        cache.remove(ProfileContext.currentId());
         return CalendarSnapshot.disconnected(LocalDate.now());
     }
+
+    public synchronized void clearCurrentCache() { cache.remove(ProfileContext.currentId()); }
 
     private CalendarSnapshot fetch(ICloudCredentialStore.Credentials account, LocalDate date) throws Exception {
         String auth = "Basic " + Base64.getEncoder().encodeToString(
